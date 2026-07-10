@@ -43,6 +43,8 @@ function getEventEmoji(event) {
     if (cats.includes('concert')) return ce('5467398680959023683', '🎹');
     if (cats.includes('theater')) return ce('5359441070201513074', '🎭');
     if (cats.includes('festival')) return ce('5193018401810822951', '🎉');
+    if (cats.includes('show')) return ce('5193018401810822951', '🎪');
+    if (cats.includes('standup')) return ce('5193018401810822951', '🎤');
     if (cats.includes('education')) return ce('5373098009640836781', '📚');
     if (cats.includes('party')) return ce('5193018401810822951', '🎉');
     if (cats.includes('quest')) return ce('5213306719215577669', '🧩');

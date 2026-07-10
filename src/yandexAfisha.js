@@ -1,13 +1,25 @@
 import axios from 'axios';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { YANDEX_AFISHA, FILTERS, HOLIDAYS } from './config.js';
 import { cleanTitle, cleanDescription, escapeHTML } from './textUtils.js';
+
+const execFileAsync = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FETCH_SCRIPT = join(__dirname, '..', 'scripts', 'fetch_yandex_afisha.py');
+const VENV_PYTHON = join(__dirname, '..', '.venv', 'bin', 'python3');
 
 /**
  * Yandex Afisha city slug mapping
  */
 const CITY_SLUGS = {
     msk: 'moscow',
-    spb: 'saint-petersburg'
+    spb: 'saint-petersburg',
+    smr: 'samara',
+    sim: 'simferopol'
 };
 
 /**
@@ -18,7 +30,9 @@ const CATEGORY_PATHS = {
     theater: 'theatre',
     exhibition: 'art',
     festival: 'festival',
-    education: 'masterclass'
+    education: 'masterclass',
+    show: 'show',
+    standup: 'standup'
 };
 
 /**
@@ -147,9 +161,21 @@ function extractBalancedObject(str, start) {
 }
 
 /**
- * Fetch HTML page and extract __APOLLO_STATE__ embedded data
- * Uses brace-counting for reliable extraction of the JS object
- * Retries up to 2 times on failure
+ * Fetch an Afisha page via curl_cffi. Plain server-side HTTP requests trigger
+ * SmartCaptcha; curl_cffi uses a browser-compatible TLS fingerprint and gives
+ * us the same server-rendered Apollo cache a visitor receives.
+ */
+async function fetchAfishaHtml(url) {
+    const python = process.env.YANDEX_AFISHA_PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
+    const { stdout } = await execFileAsync(python, [FETCH_SCRIPT, url], {
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 45000
+    });
+    return stdout;
+}
+
+/**
+ * Extract __APOLLO_STATE__ embedded in an Afisha event listing page.
  */
 async function fetchApolloState(url, retries = 2) {
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -159,16 +185,7 @@ async function fetchApolloState(url, retries = 2) {
                 console.log(`🔄 Retry #${attempt} for ${url}`);
             }
 
-            const res = await axios.get(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'ru-RU,ru;q=0.9'
-                },
-                timeout: 15000
-            });
-
-            const html = res.data;
+            const html = await fetchAfishaHtml(url);
 
             // Find the start of __APOLLO_STATE__ assignment
             const markers = ["window['__APOLLO_STATE__'] = ", 'window["__APOLLO_STATE__"] = ', '__APOLLO_STATE__ = '];
@@ -191,11 +208,7 @@ async function fetchApolloState(url, retries = 2) {
                 }
             }
 
-            // If no Apollo state found, retry
-            if (attempt < retries) continue;
-
-            console.warn(`⚠️ No __APOLLO_STATE__ found in ${url}`);
-            return null;
+            throw new Error('__APOLLO_STATE__ not found');
         } catch (error) {
             if (attempt >= retries) {
                 console.error(`❌ Yandex Afisha fetch error (${url}):`, error.message);
@@ -378,9 +391,6 @@ function parseEvents(apollo) {
  */
 function filterEvents(events) {
     return events.filter(event => {
-        // Exclude 18+ events
-        if (event.age_restriction === '18+') return false;
-
         const title = (event.title || '').toLowerCase();
         const description = (event.description || '').toLowerCase();
 
@@ -390,6 +400,7 @@ function filterEvents(events) {
         );
 
         if (hasExcludedKeyword) return false;
+        if (/(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
 
         // Check price (parse number from price string)
         const priceNumbers = event.price.match(/\d[\d\s]*/);
@@ -552,7 +563,9 @@ async function fetchCategoryPage(citySlug, category) {
  * Sequential fetching with delays to avoid rate limiting
  */
 export async function fetchEvents(citySlug) {
-    const targetCategories = Object.keys(CATEGORY_PATHS);
+    // The post is deliberately focused on the part of Afisha users asked for:
+    // headline concerts, shows, festivals, theatre and stand-up.
+    const targetCategories = ['concert', 'show', 'festival', 'theater', 'standup'];
 
     try {
         // Fetch each category sequentially with delay
@@ -560,8 +573,7 @@ export async function fetchEvents(citySlug) {
         for (const cat of targetCategories) {
             const events = await fetchCategoryPage(citySlug, cat);
             categoryResults.push(events);
-            // Delay between requests to avoid rate limiting
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 350));
         }
 
         // Merge and deduplicate
