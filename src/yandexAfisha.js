@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { YANDEX_AFISHA, FILTERS, HOLIDAYS } from './config.js';
+import { getEditorialScore } from './kudago.js';
 import { cleanTitle, cleanDescription, escapeHTML } from './textUtils.js';
 
 const execFileAsync = promisify(execFile);
@@ -544,13 +545,16 @@ function sortEvents(events) {
     const rng = seededRandom(weekSeed);
 
     const scored = events.map(event => {
-        let score = 0;
+        let score = getEditorialScore(event);
+        const tagCodes = (event.tagCodes || []).map(code => String(code).toLowerCase());
 
-        // Events with images get a bonus
-        if (event.images && event.images.length > 0) score += 10;
+        // Afisha-specific signals for events people actively plan around.
+        if (tagCodes.includes('artist-tour')) score += 10;
+        if (tagCodes.includes('hot')) score += 8;
+        if (tagCodes.includes('festival-concert')) score += 6;
 
-        // Add weekly randomness (0 to 8 points)
-        score += rng() * 8;
+        // Keep only a small deterministic rotation for equally strong cards.
+        score += rng() * 3;
 
         return { event, score };
     });
