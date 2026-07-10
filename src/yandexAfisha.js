@@ -22,6 +22,17 @@ const CITY_SLUGS = {
     sim: 'simferopol'
 };
 
+// Afisha city pages sometimes include destination festivals and other events
+// outside the city (for example, "Бессонница" in Kaluga Oblast on the Moscow
+// page). We keep the local catalogue local when the venue explicitly names a
+// different region or city.
+const OUT_OF_CITY_VENUE_MARKERS = {
+    msk: /(?:калужск|тульск|тверск|владимирск|ярославск|рязанск|смоленск)(?:ая|ой)?\s+(?:обл\.?|область)|московск(?:ая|ой)?\s+(?:обл\.?|область)|подмосков/i,
+    spb: /ленинградск(?:ая|ой)?\s+(?:обл\.?|область)|выборг|гатчин|сосновый\s+бор/i,
+    smr: /самарск(?:ая|ой)?\s+(?:обл\.?|область)|тольятти|сызран|новокуйбышевск|жигул[её]вск/i,
+    sim: /севастополь|ялт[аы]|алушт|евпатор|керч|феодоси/i
+};
+
 /**
  * Category URL paths on Yandex Afisha
  */
@@ -135,6 +146,20 @@ function getWeekendDateKeys() {
 function filterWeekendEvents(events) {
     const weekendDates = getWeekendDateKeys();
     return events.filter(event => event.dates?.some(date => weekendDates.has(date)));
+}
+
+/** Reject listings whose venue explicitly belongs outside the requested city. */
+function filterCityVenue(events, citySlug) {
+    const outsideMarker = OUT_OF_CITY_VENUE_MARKERS[citySlug];
+    if (!outsideMarker) return events;
+
+    return events.filter(event => {
+        const venue = `${event.place?.title || ''} ${event.place?.address || ''}`;
+        if (!outsideMarker.test(venue)) return true;
+
+        console.log(`📍 Skipping out-of-city event for ${citySlug}: ${event.title}`);
+        return false;
+    });
 }
 
 /**
@@ -616,6 +641,7 @@ export async function fetchEvents(citySlug) {
         // editorial ranking. Category pages otherwise include announcements
         // several months ahead.
         allEvents = filterWeekendEvents(allEvents);
+        allEvents = filterCityVenue(allEvents, citySlug);
         allEvents = filterEvents(allEvents);
 
         // Sort by priority with weekly rotation
@@ -658,6 +684,7 @@ export async function fetchEventsByCategory(citySlug, category, page = 0, perPag
 
         // Apply the same weekend boundary in the interactive catalogue.
         allEvents = filterWeekendEvents(allEvents);
+        allEvents = filterCityVenue(allEvents, citySlug);
         allEvents = filterEvents(allEvents);
         allEvents = sortEvents(allEvents);
 
