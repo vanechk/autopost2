@@ -113,6 +113,30 @@ function getWeekendDatesFormatted() {
     return `с ${startStr} - ${endStr}`;
 }
 
+/** Get local YYYY-MM-DD keys for the current weekend/adjacent holidays. */
+function getWeekendDateKeys() {
+    const { startDate, endDate } = getWeekendDates();
+    const dates = new Set();
+    const current = new Date(startDate);
+    current.setHours(0, 0, 0, 0);
+
+    while (current <= endDate) {
+        const year = current.getFullYear();
+        const month = String(current.getMonth() + 1).padStart(2, '0');
+        const day = String(current.getDate()).padStart(2, '0');
+        dates.add(`${year}-${month}-${day}`);
+        current.setDate(current.getDate() + 1);
+    }
+
+    return dates;
+}
+
+/** Keep only listings that have at least one date in the target weekend. */
+function filterWeekendEvents(events) {
+    const weekendDates = getWeekendDateKeys();
+    return events.filter(event => event.dates?.some(date => weekendDates.has(date)));
+}
+
 /**
  * Extract a balanced JS object starting from position `start` in the string
  * Handles strings (single and double quoted) to avoid counting braces inside them
@@ -588,7 +612,10 @@ export async function fetchEvents(citySlug) {
             }
         }
 
-        // Apply filters
+        // Only events that are actually happening this weekend may reach the
+        // editorial ranking. Category pages otherwise include announcements
+        // several months ahead.
+        allEvents = filterWeekendEvents(allEvents);
         allEvents = filterEvents(allEvents);
 
         // Sort by priority with weekly rotation
@@ -629,7 +656,8 @@ export async function fetchEventsByCategory(citySlug, category, page = 0, perPag
             allEvents = await fetchCategoryPage(citySlug, category);
         }
 
-        // Apply filters and sort
+        // Apply the same weekend boundary in the interactive catalogue.
+        allEvents = filterWeekendEvents(allEvents);
         allEvents = filterEvents(allEvents);
         allEvents = sortEvents(allEvents);
 
