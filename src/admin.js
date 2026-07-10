@@ -1,11 +1,9 @@
-import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { fetchEvents } from './events.js';
 import { selectDiverseEvents } from './kudago.js';
-import * as gorodzovet from './gorodzovet.js';
 import { CITIES, MOVIES, RECIPES } from './config.js';
-import { cleanDescription, cleanTitle, escapeHTML } from './textUtils.js';
+import { cleanTitle, escapeHTML } from './textUtils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const POST_IMAGE_PATH = join(__dirname, '..', 'Post', 'telegram-cloud-photo-size-2-5192667404658479432-y.jpg');
@@ -84,20 +82,18 @@ function decodeHTMLEntities(text) {
  * Generate full post with events from all cities
  */
 export async function generatePost() {
-    // Select movie and recipe based on current week for variety and consistency
     const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
     const movie = MOVIES[weekIndex % MOVIES.length];
     const recipe = RECIPES[weekIndex % RECIPES.length];
+    const maxTitleLength = 72;
 
-    let post = `Дорогие коллеги <tg-emoji emoji-id="5472055112702629499">👋</tg-emoji>
-Рабочая неделя почти закончилась, а значит самое время подумать о выходных и провести их с пользой и удовольствием <tg-emoji emoji-id="5415756754401128020">💙</tg-emoji>
-Подобрали актуальные мероприятия для спокойного и культурного отдыха в нашей рубрике «Чем заняться на выходных в родном городе» <tg-emoji emoji-id="5415803062738504079">🗺️</tg-emoji>
+    let post = `Дорогие коллеги 👋 самое время подумать о выходных!
+Подобрали для вас интересные мероприятия 🗺️
 
 `;
 
-    // Parallel fetch for all cities
     const cityResults = await Promise.all(Object.entries(CITIES).map(async ([slug, city]) => {
-        let cityPost = `<tg-emoji emoji-id="5321275372333979355">📍</tg-emoji> <b>${escapeHTML(city.name)}</b>\n\n`;
+        let cityPost = `📍 <a href="${escapeHTML(city.yandexAfishaUrl)}"><b>${escapeHTML(city.name)}</b></a>\n`;
         let events = [];
 
         try {
@@ -110,46 +106,22 @@ export async function generatePost() {
         if (topEvents.length === 0) {
             cityPost += `Мероприятия уточняются.\n\n`;
         } else {
-            // Parallel fetch full descriptions only for GorodZovet cities
-            if (slug === 'smr' || slug === 'sim') {
-                await Promise.all(topEvents.map(async (event) => {
-                    if (event.url && !event.description_fetched) {
-                        const fullDesc = await gorodzovet.fetchFullDescription(event.url);
-                        if (fullDesc) {
-                            event.description = fullDesc;
-                            event.description_fetched = true;
-                        }
-                    }
-                }));
-            }
-
-            topEvents.forEach((event, i) => {
+            topEvents.forEach(event => {
                 const emoji = getEventEmoji(event);
                 const title = event.short_title || event.title || 'Мероприятие';
                 const url = event.site_url || event.url || '';
                 const cleanedTitle = cleanTitle(title);
-                const formattedTitle = url ? `<a href="${url}">${escapeHTML(cleanedTitle)}</a>` : escapeHTML(cleanedTitle);
+                const shortTitle = cleanedTitle.length > maxTitleLength
+                    ? `${cleanedTitle.slice(0, maxTitleLength - 1).trim()}…`
+                    : cleanedTitle;
+                const formattedTitle = url ? `<a href="${escapeHTML(url)}">${escapeHTML(shortTitle)}</a>` : escapeHTML(shortTitle);
+                const price = event.price && event.price !== 'Цена не указана'
+                    ? ` (${escapeHTML(cleanTitle(event.price))})`
+                    : '';
 
-                cityPost += `${emoji} ${formattedTitle}\n`;
-
-                let eventDetails = [];
-                if (event.description) {
-                    const desc = cleanDescription(event.description, 250);
-                    if (desc) eventDetails.push(escapeHTML(desc));
-                }
-
-                if (event.price && event.price !== 'Цена не указана') {
-                    eventDetails.push(escapeHTML(cleanTitle(event.price)));
-                }
-
-                if (eventDetails.length > 0) {
-                    cityPost += `<blockquote expandable>${eventDetails.join('\n')}</blockquote>\n`;
-                }
-
-                cityPost += '\n';
+                cityPost += `${emoji} ${formattedTitle}${price}\n`;
             });
-
-            cityPost += `<a href="${escapeHTML(city.yandexAfishaUrl)}">Все события в ${escapeHTML(city.afishaCityName)} — на Яндекс Афише →</a>\n\n`;
+            cityPost += '\n';
         }
         return cityPost;
     }));
@@ -160,15 +132,15 @@ export async function generatePost() {
     const movieLink = `<a href="${escapeHTML(movie.url)}">${escapeHTML(cleanedMovieTitle)}</a>`;
     const recipeLink = `<a href="${escapeHTML(recipe.url)}">рецепт</a>`;
 
-    const movieDesc = cleanDescription(movie.desc, 100) || movie.desc.replace(/\.+$/, '.');
-    post += `А для тех, кто просто хочет отдохнуть от рабочей недели, мы подготовили домашние активности <tg-emoji emoji-id="5420315771991497307">🔥</tg-emoji>
-<tg-emoji emoji-id="5375464961822695044">🎬</tg-emoji> Посмотреть фильм «${movieLink}» - ${escapeHTML(movieDesc)}
-<tg-emoji emoji-id="5390932938646887892">🍰</tg-emoji> ${escapeHTML(cleanTitle(recipe.title))} - ${recipeLink}
-<tg-emoji emoji-id="5346085319638792856">🧘‍♀️</tg-emoji> Прогулка в парках - дышим свежим воздухом
+    post += `🏠 <b>Если не хотите выходить из дома:</b>
+🎬 Посмотреть фильм «${movieLink}»
+🍰 ${escapeHTML(cleanTitle(recipe.title))} — ${recipeLink}
 
-Пусть выходные пройдут тепло, интересно и с пользой ✨
+Больше идей — в нашем <a href="https://t.me/kudagoduiobot?start=weekend">боте</a> ✨`;
 
-Если хотите узнать больше мероприятий в вашем городе — переходите в наш <a href="https://t.me/kudagoduiobot?start=weekend">бот</a> и увидимся там!`;
+    if (post.length > 3500) {
+        throw new Error(`Compact post is too long: ${post.length} characters`);
+    }
 
     return post;
 }
