@@ -671,7 +671,7 @@ function formatEvent(event, index) {
     const title = event.title || 'Без названия';
     const cleanedTitle = cleanTitle(title);
     const price = event.price || 'Цена не указана';
-    const url = event.site_url || `${YANDEX_AFISHA.baseUrl}/moscow`;
+    const url = event.site_url || event.url || `${YANDEX_AFISHA.baseUrl}/moscow`;
 
     let text = `${index + 1}. <a href="${escapeHTML(url)}">${escapeHTML(cleanedTitle)}</a>\n`;
 
