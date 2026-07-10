@@ -403,6 +403,8 @@ function parseEvents(apollo) {
             else if (tagCodes.includes('theatre') || tagCodes.includes('theater')) category = 'theater';
             else if (tagCodes.includes('exhibition')) category = 'exhibition';
             else if (tagCodes.includes('festival')) category = 'festival';
+            else if (tagCodes.includes('standup')) category = 'standup';
+            else if (tagCodes.includes('show')) category = 'show';
             else if (tagCodes.includes('master-class') || tagCodes.includes('masterclass') || tagCodes.includes('education')) category = 'education';
             else if (tagCodes.includes('cinema')) category = 'cinema';
         }
@@ -414,6 +416,8 @@ function parseEvents(apollo) {
             else if (urlPath.includes('/theatre/') || urlPath.includes('/theater/')) category = 'theater';
             else if (urlPath.includes('/art/') || urlPath.includes('/exhibition/') || urlPath.includes('/museum/')) category = 'exhibition';
             else if (urlPath.includes('/festival/')) category = 'festival';
+            else if (urlPath.includes('/standup/')) category = 'standup';
+            else if (urlPath.includes('/show/')) category = 'show';
             else if (urlPath.includes('/masterclass/') || urlPath.includes('/education/')) category = 'education';
             else if (urlPath.includes('/cinema/')) category = 'cinema';
         }
@@ -485,6 +489,23 @@ function filterEvents(events) {
         if (hasExcludedKeyword) return false;
         if (/(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
         if (tagCodes.some(code => code === 'kids' || code === 'children' || code === 'childrens')) return false;
+
+        // A regular cinema session is not an editorial weekend recommendation.
+        // Keep film listings only for premieres, preview screenings and special
+        // programmes explicitly marked by Afisha.
+        if (event.categories?.includes('cinema')) {
+            const isPremiere = tagCodes.some(code => /premier|special-screening|pre-release/.test(code))
+                || /премьер|предпремьер|спецпоказ|премьерный показ/i.test(`${title} ${description}`);
+            if (!isPremiere) return false;
+        }
+
+        // Ticket bundles and subscriptions duplicate the event card rather than
+        // describing a separate thing to do this weekend.
+        if (/(комплексн(?:ый|ого)? билет|абонемент|подарочн(?:ый|ого)? билет)/i.test(`${title} ${description}`)) return false;
+
+        // If Afisha cannot classify a card as an event format we trust, do not
+        // use it merely to fill the weekly post.
+        if (event.categories?.includes('other')) return false;
 
         // Check price (parse number from price string)
         const priceNumbers = event.price.match(/\d[\d\s]*/);
