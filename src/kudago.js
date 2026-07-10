@@ -116,24 +116,6 @@ function isRecurringEvent(event) {
 }
 
 /**
- * Simple seeded random number generator for consistent weekly shuffling
- */
-function seededRandom(seed) {
-    let s = seed;
-    return function () {
-        s = (s * 1103515245 + 12345) & 0x7fffffff;
-        return s / 0x7fffffff;
-    };
-}
-
-/**
- * Get current week number for seeding
- */
-function getWeekSeed() {
-    return Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
-}
-
-/**
  * Filter events based on criteria
  */
 function filterEvents(events) {
@@ -158,70 +140,132 @@ function filterEvents(events) {
         const price = parsePrice(event.price);
         if (price !== null && price > FILTERS.maxPrice) return false;
 
+        // The post is aimed at adult colleagues. Keep family activities out of
+        // this general-purpose feed instead of accidentally spending a slot on
+        // a children's course when an API category is broad.
+        if (/(для детей|детск|дети и их родители|семейн)/i.test(`${event.title || ''} ${event.description || ''}`)) return false;
+
+        // Classes and generic listings are still available in the catalogue,
+        // but should not compete with a weekend recommendation.
+        if (getEditorialScore(event) < -10) return false;
+
         return true;
     });
 }
 
+function eventText(event) {
+    return `${event.title || ''} ${event.short_title || ''} ${event.description || ''}`.toLowerCase();
+}
+
+function eventCategory(event) {
+    const categories = (event.categories || []).map(category =>
+        typeof category === 'string' ? category : category.slug
+    );
+
+    if (categories.includes('concert')) return 'concert';
+    if (categories.includes('festival')) return 'festival';
+    if (categories.includes('entertainment') || categories.includes('party')) return 'entertainment';
+    if (categories.includes('theater')) return 'theater';
+    if (categories.includes('exhibition')) return 'exhibition';
+    if (categories.includes('education')) return 'education';
+
+    // GorodZovet does not provide categories. Classify its titles as well so
+    // the same editorial balance applies to all four cities.
+    const text = eventText(event);
+    if (text.includes('стендап') || text.includes('шоу') || text.includes('вечерин') || text.includes('квиз')) return 'entertainment';
+    if (text.includes('концерт') || text.includes('музык')) return 'concert';
+    if (text.includes('фестиваль') || text.includes('фест')) return 'festival';
+    if (text.includes('спектакл') || text.includes('театр') || text.includes('мюзикл') || text.includes('опера')) return 'theater';
+    if (text.includes('выставк') || text.includes('экспозиц')) return 'exhibition';
+    if (text.includes('лекци') || text.includes('мастер-класс') || text.includes('курс')) return 'education';
+    return 'other';
+}
+
 /**
- * Sort events by priority with weekly rotation
- * - Deprioritizes recurring events (weekly quizzes, etc.)
- * - Uses week-based seed to show different events each week
+ * Editorial score for a weekend recommendation. It favours events people plan
+ * a weekend around and keeps recurring classes and generic listings out of the
+ * top of the feed.
  */
+export function getEditorialScore(event) {
+    const text = eventText(event);
+    const category = eventCategory(event);
+    let score = {
+        concert: 42,
+        festival: 38,
+        entertainment: 30,
+        theater: 20,
+        exhibition: 2,
+        education: -12,
+        other: 0
+    }[category];
+
+    const boosts = [
+        ['концерт', 18], ['мюзикл', 16], ['шоу', 16], ['стендап', 16],
+        ['ледов', 20], ['фестиваль', 18], ['open air', 12], ['опен-эйр', 12],
+        ['вечерин', 12], ['диджей', 12], ['dj', 10], ['дискотек', 10],
+        ['цирк', 10], ['матч', 10], ['спорт', 8], ['комеди', 8]
+    ];
+    const penalties = [
+        ['экскурси', 35], ['лекци', 30], ['мастер-класс', 25], ['вебинар', 30],
+        ['медитац', 22], ['арт-терап', 22], ['рисовани', 18], ['знакомств', 24],
+        ['быстрые свидания', 30], ['для детей', 22], ['детск', 18],
+        ['орган', 12], ['барокко', 12], ['классическ', 8], ['экспозици', 12]
+    ];
+
+    for (const [keyword, value] of boosts) {
+        if (text.includes(keyword)) score += value;
+    }
+    for (const [keyword, value] of penalties) {
+        if (text.includes(keyword)) score -= value;
+    }
+
+    if (event.images?.length) score += 3;
+    if (isRecurringEvent(event)) score -= 20;
+    if (getEventDuration(event) > 7) score -= 12;
+
+    return score;
+}
+
 function sortEvents(events) {
-    const weekSeed = getWeekSeed();
-    const rng = seededRandom(weekSeed);
-
-    // Assign a random score to each event for this week
-    const scored = events.map(event => {
-        let score = 0;
-
-        // Events with images get a bonus
-        if (event.images && event.images.length > 0) score += 10;
-
-        // Recurring events get a significant penalty
-        if (isRecurringEvent(event)) score -= 15;
-
-        // Long-running events get a smaller penalty
-        const duration = getEventDuration(event);
-        if (duration > 7) score -= 5;
-
-        // Add weekly randomness (0 to 8 points)
-        score += rng() * 8;
-
-        return { event, score };
+    return [...events].sort((a, b) => {
+        const scoreDifference = getEditorialScore(b) - getEditorialScore(a);
+        if (scoreDifference !== 0) return scoreDifference;
+        return String(a.title || '').localeCompare(String(b.title || ''), 'ru');
     });
-
-    // Sort by score descending (highest score first)
-    scored.sort((a, b) => b.score - a.score);
-
-    return scored.map(s => s.event);
 }
 
 /**
  * Fetch events for a single category from KudaGo API
  */
 async function fetchCategoryEvents(citySlug, category, dates) {
-    try {
-        const response = await axios.get(`${KUDAGO.baseUrl}/events/`, {
-            params: {
-                location: citySlug,
-                actual_since: dates.since,
-                actual_until: dates.until,
-                categories: category,
-                page_size: 10,
-                fields: KUDAGO.fields,
-                order_by: '-publication_date'
-            },
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-            },
-            timeout: 30000
-        });
-        return response.data.results || [];
-    } catch (error) {
-        console.error(`❌ KudaGo Error (${citySlug}/${category}):`, error.message);
-        return [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const response = await axios.get(`${KUDAGO.baseUrl}/events/`, {
+                params: {
+                    location: citySlug,
+                    actual_since: dates.since,
+                    actual_until: dates.until,
+                    categories: category,
+                    page_size: 10,
+                    fields: KUDAGO.fields,
+                    order_by: '-publication_date'
+                },
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+                },
+                timeout: 30000
+            });
+            return response.data.results || [];
+        } catch (error) {
+            if (attempt === 1 || ![429, 500, 502, 503, 504].includes(error.response?.status)) {
+                console.error(`❌ KudaGo Error (${citySlug}/${category}):`, error.message);
+                return [];
+            }
+            await new Promise(resolve => setTimeout(resolve, 800));
+        }
     }
+
+    return [];
 }
 
 /**
@@ -229,13 +273,18 @@ async function fetchCategoryEvents(citySlug, category, dates) {
  */
 export async function fetchEvents(citySlug) {
     const dates = getWeekendDates();
-    const targetCategories = ['exhibition', 'concert', 'theater', 'festival', 'education'];
+    // KudaGo places stand-up and shows in "entertainment". Include it so a
+    // post is not limited to museums, lectures and chamber performances.
+    const targetCategories = ['concert', 'theater', 'festival', 'entertainment', 'exhibition', 'education'];
 
     try {
-        // Fetch each category in parallel
-        const categoryResults = await Promise.all(
-            targetCategories.map(cat => fetchCategoryEvents(citySlug, cat, dates))
-        );
+        // A burst of 12 requests (two cities × six categories) is enough for
+        // KudaGo to answer with 503. Pace requests within each city instead.
+        const categoryResults = [];
+        for (const category of targetCategories) {
+            categoryResults.push(await fetchCategoryEvents(citySlug, category, dates));
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
 
         // Merge and deduplicate
         const seenIds = new Set();
@@ -296,78 +345,40 @@ function getEventType(event) {
 }
 
 /**
- * Select diverse events ensuring different categories are represented
- * Picks one event from each type, rotating priority weekly
- * @param {Array} events - sorted events list
- * @param {number} count - how many events to pick
- * @returns {Array} diverse selection of events
+ * Pick three editorially strong but non-repetitive recommendations. One quiet
+ * cultural item may stay in the card; it can no longer dominate the selection.
  */
 export function selectDiverseEvents(events, count = 3) {
-    if (events.length <= count) return events;
-
-    // Define category priority (rotate which types get picked each week)
-    const allTypes = ['exhibition', 'concert', 'theater', 'festival', 'education', 'party', 'quest'];
-    const weekSeed = getWeekSeed();
-
-    // Rotate priority each week
-    const startIdx = weekSeed % allTypes.length;
-    const rotatedTypes = [
-        ...allTypes.slice(startIdx),
-        ...allTypes.slice(0, startIdx)
-    ];
-
-    // Group events by type
-    const byType = {};
-    for (const event of events) {
-        const type = getEventType(event);
-        if (!byType[type]) byType[type] = [];
-        byType[type].push(event);
-    }
-
-    console.log('📊 Event type distribution:', Object.keys(byType).map(k => `${k}: ${byType[k].length}`).join(', '));
-
+    const ranked = sortEvents(events);
     const selected = [];
-    const usedIds = new Set();
+    const selectedCategories = new Set();
+    let quietEvents = 0;
 
-    // Pick one event from each type in priority order
-    for (const type of rotatedTypes) {
+    for (const event of ranked) {
         if (selected.length >= count) break;
-        if (byType[type] && byType[type].length > 0) {
-            const event = byType[type].shift();
-            if (!usedIds.has(event.id)) {
-                selected.push(event);
-                usedIds.add(event.id);
-                console.log(`  ✅ Picked [${type}]: ${event.short_title || event.title}`);
-            }
-        }
+        const category = eventCategory(event);
+        const isQuiet = category === 'exhibition' || category === 'education';
+        const hasGoodUnusedCategory = ranked.some(candidate =>
+            !selectedCategories.has(eventCategory(candidate)) && getEditorialScore(candidate) >= 0
+        );
+
+        if (isQuiet && quietEvents >= 1) continue;
+        if (selectedCategories.has(category) && hasGoodUnusedCategory) continue;
+
+        selected.push(event);
+        selectedCategories.add(category);
+        if (isQuiet) quietEvents++;
     }
 
-    // Fill remaining slots from the sorted list (avoiding duplicates and same types)
-    const usedTypes = new Set(selected.map(e => getEventType(e)));
-    if (selected.length < count) {
-        // First try to fill with unused types
-        for (const event of events) {
-            if (selected.length >= count) break;
-            const type = getEventType(event);
-            if (!usedIds.has(event.id) && !usedTypes.has(type)) {
-                selected.push(event);
-                usedIds.add(event.id);
-                usedTypes.add(type);
-                console.log(`  ✅ Filled [${type}]: ${event.short_title || event.title}`);
-            }
-        }
+    // Regional feeds can be small: complete the card instead of omitting an item.
+    for (const event of ranked) {
+        if (selected.length >= count) break;
+        if (!selected.includes(event)) selected.push(event);
     }
 
-    // If still not enough, fill with any remaining events
-    if (selected.length < count) {
-        for (const event of events) {
-            if (selected.length >= count) break;
-            if (!usedIds.has(event.id)) {
-                selected.push(event);
-                usedIds.add(event.id);
-            }
-        }
-    }
+    console.log('✨ Editorial picks:', selected.map(event =>
+        `[${eventCategory(event)} ${getEditorialScore(event)}] ${event.title}`
+    ).join(' | '));
 
     return selected;
 }

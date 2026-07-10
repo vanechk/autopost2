@@ -2,10 +2,18 @@
  * City configuration for KudaGo API
  */
 export const CITIES = {
-    msk: { name: 'Москва', emoji: '🏙️', slug: 'msk' },
-    spb: { name: 'Санкт-Петербург', emoji: '🎭', slug: 'spb' },
-    smr: { name: 'Самара', emoji: '🌊', slug: 'smr' },
-    sim: { name: 'Симферополь', emoji: '🏔️', slug: 'sim' }
+    msk: { name: 'Москва', afishaCityName: 'Москве', emoji: '🏙️', slug: 'msk', yandexAfishaUrl: 'https://afisha.yandex.ru/moscow' },
+    spb: { name: 'Санкт-Петербург', afishaCityName: 'Санкт-Петербурге', emoji: '🎭', slug: 'spb', yandexAfishaUrl: 'https://afisha.yandex.ru/saint-petersburg' },
+    smr: { name: 'Самара', afishaCityName: 'Самаре', emoji: '🌊', slug: 'smr', yandexAfishaUrl: 'https://afisha.yandex.ru/samara' },
+    sim: { name: 'Симферополь', afishaCityName: 'Симферополе', emoji: '🏔️', slug: 'sim', yandexAfishaUrl: 'https://afisha.yandex.ru/simferopol' }
+};
+
+/**
+ * Public Yandex Afisha entry point. It is used as a click-through link:
+ * direct server requests are regularly blocked by Yandex SmartCaptcha.
+ */
+export const YANDEX_AFISHA = {
+    baseUrl: 'https://afisha.yandex.ru'
 };
 
 /**
@@ -44,7 +52,8 @@ export const HOLIDAYS = [
  */
 export const FILTERS = {
     excludeKeywords: ['стриптиз', 'casino', '18+', 'night club', 'afterparty', 'эротик', 'казино', 'тур', 'tour'],
-    maxPrice: 2000,
+    // The old ceiling removed most large concerts and shows before ranking.
+    maxPrice: 8000,
     maxEvents: 10
 };
 

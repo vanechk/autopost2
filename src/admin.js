@@ -146,6 +146,8 @@ export async function generatePost() {
 
                 cityPost += '\n';
             });
+
+            cityPost += `<a href="${escapeHTML(city.yandexAfishaUrl)}">Все события в ${escapeHTML(city.afishaCityName)} — на Яндекс Афише →</a>\n\n`;
         }
         return cityPost;
     }));

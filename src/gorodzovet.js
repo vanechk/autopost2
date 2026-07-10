@@ -128,7 +128,19 @@ function filterEvents(events) {
 
         if (hasExcludedKeyword) return false;
 
-        return !hasExcludedKeyword;
+        // The weekly card is for adults, not a children's programme.
+        if (/(для детей|детск|дети и их родители|семейн)/i.test(`${title} ${description}`)) return false;
+
+        // Keep the price policy consistent with KudaGo. GorodZovet exposes a
+        // formatted string rather than a numeric field, so use its first price
+        // as the minimum price of the event.
+        const priceMatch = String(event.price || '').match(/\d[\d\s]*/);
+        if (priceMatch) {
+            const minimumPrice = Number(priceMatch[0].replace(/\s/g, ''));
+            if (minimumPrice > FILTERS.maxPrice) return false;
+        }
+
+        return true;
     });
 }
 
@@ -408,4 +420,3 @@ export async function fetchFullDescription(url) {
         return '';
     }
 }
-

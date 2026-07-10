@@ -214,13 +214,15 @@ bot.command('help', async (ctx) => {
  * Category selection keyboard
  */
 function getCategoryKeyboard(citySlug) {
+    const city = CITIES[citySlug];
     return Markup.inlineKeyboard([
         [Markup.button.callback('🖼️ Выставки', `cat:${citySlug}:exhibition:0`),
         Markup.button.callback('🎵 Концерты', `cat:${citySlug}:concert:0`)],
         [Markup.button.callback('🎭 Театр', `cat:${citySlug}:theater:0`),
         Markup.button.callback('🎪 Фестивали', `cat:${citySlug}:festival:0`)],
         [Markup.button.callback('📚 Образование', `cat:${citySlug}:education:0`),
-        Markup.button.callback('📋 Все', `cat:${citySlug}:all:0`)]
+        Markup.button.callback('📋 Все', `cat:${citySlug}:all:0`)],
+        [Markup.button.url('↗️ Все события на Яндекс Афише', city.yandexAfishaUrl)]
     ]);
 }
 
