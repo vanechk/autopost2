@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { fetchEvents } from './events.js';
 import { selectDiverseEvents } from './kudago.js';
 import { CITIES, MOVIES, RECIPES } from './config.js';
-import { cleanTitle, escapeHTML } from './textUtils.js';
+import { cleanDescription, cleanTitle, escapeHTML } from './textUtils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const POST_IMAGE_PATH = join(__dirname, '..', 'Post', 'telegram-cloud-photo-size-2-5192667404658479432-y.jpg');
@@ -26,38 +26,35 @@ export function getPostImagePath() {
 }
 
 /**
- * Get custom emoji matching the event type
+ * Get plain emoji matching the event type
  */
 function getEventEmoji(event) {
     // Check KudaGo categories
     const cats = (event.categories || []).map(c => typeof c === 'string' ? c : (c.slug || ''));
 
-    function ce(id, fallback) {
-        return `<tg-emoji emoji-id="${id}">${fallback}</tg-emoji>`;
-    }
-
     // Match by category
-    if (cats.includes('exhibition')) return ce('5375074927252621134', '🖼️');
-    if (cats.includes('concert')) return ce('5467398680959023683', '🎹');
-    if (cats.includes('theater')) return ce('5359441070201513074', '🎭');
-    if (cats.includes('festival')) return ce('5193018401810822951', '🎉');
-    if (cats.includes('show')) return ce('5193018401810822951', '🎪');
-    if (cats.includes('standup')) return ce('5193018401810822951', '🎤');
-    if (cats.includes('education')) return ce('5373098009640836781', '📚');
-    if (cats.includes('party')) return ce('5193018401810822951', '🎉');
-    if (cats.includes('quest')) return ce('5213306719215577669', '🧩');
+    if (cats.includes('exhibition')) return '🖼️';
+    if (cats.includes('concert')) return '🎹';
+    if (cats.includes('theater')) return '🎭';
+    if (cats.includes('festival')) return '🎉';
+    if (cats.includes('show')) return '🎪';
+    if (cats.includes('standup')) return '🎤';
+    if (cats.includes('education')) return '📚';
+    if (cats.includes('party')) return '🎉';
+    if (cats.includes('quest')) return '🧩';
 
     // Fallback: detect from title for GorodZovet events
     const title = (event.title || event.short_title || '').toLowerCase();
-    if (title.includes('выставк') || title.includes('экспозиц')) return ce('5375074927252621134', '🖼️');
-    if (title.includes('концерт') || title.includes('музык')) return ce('5467398680959023683', '🎹');
-    if (title.includes('спектакл') || title.includes('театр') || title.includes('мюзикл')) return ce('5359441070201513074', '🎭');
-    if (title.includes('фестиваль') || title.includes('фест')) return ce('5193018401810822951', '🎉');
-    if (title.includes('лекци') || title.includes('мастер-класс')) return ce('5373098009640836781', '📚');
-    if (title.includes('вечеринк')) return ce('5193018401810822951', '🎉');
-    if (title.includes('квест') || title.includes('квиз')) return ce('5213306719215577669', '🧩');
+    if (title.includes('выставк') || title.includes('экспозиц')) return '🖼️';
+    if (title.includes('стендап')) return '🎤';
+    if (title.includes('концерт') || title.includes('музык')) return '🎹';
+    if (title.includes('спектакл') || title.includes('театр') || title.includes('мюзикл')) return '🎭';
+    if (title.includes('фестиваль') || title.includes('фест')) return '🎉';
+    if (title.includes('лекци') || title.includes('мастер-класс')) return '📚';
+    if (title.includes('вечеринк')) return '🎉';
+    if (title.includes('квест') || title.includes('квиз')) return '🧩';
 
-    return ce('5193018401810822951', '🎉');
+    return '✨';
 }
 
 /**
@@ -93,7 +90,7 @@ export async function generatePost() {
 `;
 
     const cityResults = await Promise.all(Object.entries(CITIES).map(async ([slug, city]) => {
-        let cityPost = `📍 <a href="${escapeHTML(city.yandexAfishaUrl)}"><b>${escapeHTML(city.name)}</b></a>\n`;
+        let cityPost = `📍 <b>${escapeHTML(city.name)}</b>\n`;
         let events = [];
 
         try {
@@ -130,13 +127,14 @@ export async function generatePost() {
 
     const cleanedMovieTitle = cleanTitle(movie.title.replace(/[«»]/g, ''));
     const movieLink = `<a href="${escapeHTML(movie.url)}">${escapeHTML(cleanedMovieTitle)}</a>`;
-    const recipeLink = `<a href="${escapeHTML(recipe.url)}">рецепт</a>`;
+    const movieDesc = cleanDescription(movie.desc, 100) || movie.desc.replace(/\.+$/, '.');
+    const recipeLink = `<a href="${escapeHTML(recipe.url)}">${escapeHTML(cleanTitle(recipe.title))}</a>`;
 
     post += `🏠 <b>Если не хотите выходить из дома:</b>
-🎬 Посмотреть фильм «${movieLink}»
-🍰 ${escapeHTML(cleanTitle(recipe.title))} — ${recipeLink}
+🎬 Посмотреть фильм «${movieLink}» — ${escapeHTML(movieDesc)}
+🍰 ${recipeLink} — рецепт
 
-Больше идей — в нашем <a href="https://t.me/kudagoduiobot?start=weekend">боте</a> ✨`;
+<a href="https://t.me/kudagoduiobot?start=weekend">Больше ✨ ✨</a>`;
 
     if (post.length > 3500) {
         throw new Error(`Compact post is too long: ${post.length} characters`);
