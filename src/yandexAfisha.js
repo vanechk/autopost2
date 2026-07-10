@@ -24,14 +24,27 @@ const CITY_SLUGS = {
 };
 
 // Afisha city pages sometimes include destination festivals and other events
-// outside the city (for example, "Бессонница" in Kaluga Oblast on the Moscow
-// page). We keep the local catalogue local when the venue explicitly names a
-// different region or city.
+// outside the intended coverage. Moscow and St Petersburg stay city-only;
+// the regional audiences deliberately get a practical nearby-area radius.
+const REGIONAL_AFISHA_SLUGS = {
+    smr: ['samara', 'togliatti', 'syzran', 'novokuybyshevsk', 'zhigulevsk'],
+    sim: ['simferopol', 'yalta', 'alushta', 'bakhchisaray', 'evpatoriya', 'saki', 'sevastopol', 'sudak']
+};
+
+// Query neighbouring city pages only when the main city cannot fill the card
+// with three strong listings. This widens coverage without slowing every run.
+const REGIONAL_BACKFILL_SLUGS = {
+    smr: ['togliatti'],
+    sim: ['yalta', 'alushta', 'sevastopol']
+};
+const REGIONAL_BACKFILL_CATEGORIES = ['concert', 'show', 'festival', 'theater', 'standup'];
+
 const OUT_OF_CITY_VENUE_MARKERS = {
     msk: /(?:калужск|тульск|тверск|владимирск|ярославск|рязанск|смоленск)(?:ая|ой)?\s+(?:обл\.?|область)|московск(?:ая|ой)?\s+(?:обл\.?|область)|подмосков/i,
     spb: /ленинградск(?:ая|ой)?\s+(?:обл\.?|область)|выборг|гатчин|сосновый\s+бор/i,
-    smr: /самарск(?:ая|ой)?\s+(?:обл\.?|область)|тольятти|сызран|новокуйбышевск|жигул[её]вск/i,
-    sim: /севастополь|ялт[аы]|алушт|евпатор|керч|феодоси/i
+    // Samara Oblast is in scope. For Crimea, retain only cities beyond the
+    // requested ~100 km radius from Simferopol as exclusions.
+    sim: /керч|феодоси|черноморск|щ[её]лкин|красноперекопск/i
 };
 
 /**
@@ -154,11 +167,12 @@ function filterWeekendEvents(events) {
 function filterCityVenue(events, citySlug) {
     const outsideMarker = OUT_OF_CITY_VENUE_MARKERS[citySlug];
     const afishaCity = CITY_SLUGS[citySlug] || citySlug;
+    const allowedSlugs = REGIONAL_AFISHA_SLUGS[citySlug] || [afishaCity];
 
     return events.filter(event => {
         // Apollo includes recommendation cards from other cities in the same
         // cache. The event URL is the authoritative city signal for those.
-        if (event.site_url && !event.site_url.includes(`/${afishaCity}/`)) {
+        if (event.site_url && !allowedSlugs.some(slug => event.site_url.includes(`/${slug}/`))) {
             console.log(`📍 Skipping foreign-city event for ${citySlug}: ${event.title}`);
             return false;
         }
@@ -489,6 +503,8 @@ function filterEvents(events) {
 
         if (hasExcludedKeyword) return false;
         if (/(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
+        if (/(экскурси|обзорн(?:ая|ый)|прогулк[аи]\s+(?:по|с))/i.test(`${title} ${description}`)
+            || event.site_url?.includes('/excursions/')) return false;
         if (tagCodes.some(code => code === 'kids' || code === 'children' || code === 'childrens')) return false;
 
         // A regular cinema session is not an editorial weekend recommendation.
@@ -703,6 +719,32 @@ export async function fetchEvents(citySlug) {
         allEvents = filterWeekendEvents(allEvents);
         allEvents = filterCityVenue(allEvents, citySlug);
         allEvents = filterEvents(allEvents);
+
+        // If the city page has fewer than three useful cards, supplement it
+        // with the configured nearby area. We deliberately skip cinema here:
+        // primary-city premieres are still allowed, but regional expansion is
+        // for real events people would travel for.
+        if (allEvents.length < 3 && REGIONAL_BACKFILL_SLUGS[citySlug]) {
+            const seenIds = new Set(allEvents.map(event => event.id));
+            for (const nearbyCity of REGIONAL_BACKFILL_SLUGS[citySlug]) {
+                const nearbyResults = await Promise.all(
+                    REGIONAL_BACKFILL_CATEGORIES.map(category => fetchCategoryPage(nearbyCity, category))
+                );
+                const nearbyEvents = nearbyResults.flat();
+
+                const qualifiedNearbyEvents = filterEvents(
+                    filterCityVenue(filterWeekendEvents(nearbyEvents), citySlug)
+                );
+                for (const event of qualifiedNearbyEvents) {
+                    if (!seenIds.has(event.id)) {
+                        seenIds.add(event.id);
+                        allEvents.push(event);
+                    }
+                }
+
+                if (allEvents.length >= 3) break;
+            }
+        }
 
         // Sort by priority with weekly rotation
         allEvents = sortEvents(allEvents);
