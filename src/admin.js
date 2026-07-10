@@ -71,6 +71,11 @@ function decodeHTMLEntities(text) {
         .replace(/&nbsp;/g, ' ');
 }
 
+/** Link to the official Kinopoisk search for a recommended film. */
+function getKinopoiskUrl(title) {
+    return `https://www.kinopoisk.ru/s/?query=${encodeURIComponent(title)}`;
+}
+
 /**
  * Escape HTML special characters
  */
@@ -126,7 +131,7 @@ export async function generatePost() {
     post += cityResults.join('');
 
     const cleanedMovieTitle = cleanTitle(movie.title.replace(/[«»]/g, ''));
-    const movieLink = `<a href="${escapeHTML(movie.url)}">${escapeHTML(cleanedMovieTitle)}</a>`;
+    const movieLink = `<a href="${getKinopoiskUrl(cleanedMovieTitle)}">${escapeHTML(cleanedMovieTitle)}</a>`;
     const movieDesc = cleanDescription(movie.desc, 100) || movie.desc.replace(/\.+$/, '.');
     const recipeLink = `<a href="${escapeHTML(recipe.url)}">${escapeHTML(cleanTitle(recipe.title))}</a>`;
 
