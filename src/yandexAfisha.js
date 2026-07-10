@@ -43,7 +43,8 @@ const CATEGORY_PATHS = {
     festival: 'festival',
     education: 'masterclass',
     show: 'show',
-    standup: 'standup'
+    standup: 'standup',
+    cinema: 'cinema'
 };
 
 /**
@@ -293,6 +294,28 @@ function parseEvents(apollo) {
         }
     });
 
+    // City pages do not all use Featured cards. In smaller cities Afisha often
+    // embeds an ActualEvent directly in another cache entry, so collect those
+    // schedules too instead of silently treating the listing as empty.
+    const scheduleInfoMap = {};
+    const visited = new WeakSet();
+    const collectSchedules = value => {
+        if (!value || typeof value !== 'object' || visited.has(value)) return;
+        visited.add(value);
+
+        const eventRef = value.event?.__ref || value.object?.event?.__ref;
+        const scheduleInfo = value.scheduleInfo || value.object?.scheduleInfo;
+        if (eventRef?.startsWith('EventPreview:') && Array.isArray(scheduleInfo?.dates)) {
+            const current = scheduleInfoMap[eventRef];
+            if (!current || scheduleInfo.dates.length > current.dates.length) {
+                scheduleInfoMap[eventRef] = scheduleInfo;
+            }
+        }
+
+        for (const nested of Object.values(value)) collectSchedules(nested);
+    };
+    collectSchedules(apollo);
+
     for (const key of eventKeys) {
         const ep = apollo[key];
         if (!ep) continue;
@@ -315,19 +338,20 @@ function parseEvents(apollo) {
             }
         }
 
-        // Resolve place from Featured entry
-        let place = null;
         const featured = featuredMap[key];
-        if (featured?.object) {
-            // Try to find place reference in scheduleInfo or directly
-            const placeRef = featured.object.place?.__ref;
-            if (placeRef && apollo[placeRef]) {
-                const pp = apollo[placeRef];
-                place = {
-                    title: pp.title || '',
-                    address: pp.address || ''
-                };
-            }
+        const scheduleInfo = featured?.object?.scheduleInfo || scheduleInfoMap[key] || null;
+
+        // Resolve place from Featured entry or an ActualEvent schedule
+        let place = null;
+        const placeRef = featured?.object?.place?.__ref
+            || scheduleInfo?.onlyPlace?.__ref
+            || scheduleInfo?.oneOfPlaces?.__ref;
+        if (placeRef && apollo[placeRef]) {
+            const pp = apollo[placeRef];
+            place = {
+                title: pp.title || '',
+                address: pp.address || ''
+            };
         }
 
         // Fallback: try to find PlacePreview linked to this event anywhere in apollo
@@ -359,10 +383,7 @@ function parseEvents(apollo) {
 
         // Extract schedule dates from Featured
         let dates = [];
-        if (featured?.object?.scheduleInfo) {
-            const si = featured.object.scheduleInfo;
-            dates = si.dates || [];
-        }
+        if (scheduleInfo) dates = scheduleInfo.dates || [];
 
         // Determine event type from tags
         let category = 'other';
@@ -374,6 +395,7 @@ function parseEvents(apollo) {
             else if (tagCodes.includes('exhibition')) category = 'exhibition';
             else if (tagCodes.includes('festival')) category = 'festival';
             else if (tagCodes.includes('master-class') || tagCodes.includes('masterclass') || tagCodes.includes('education')) category = 'education';
+            else if (tagCodes.includes('cinema')) category = 'cinema';
         }
 
         // Fallback: detect category from URL path
@@ -384,6 +406,7 @@ function parseEvents(apollo) {
             else if (urlPath.includes('/art/') || urlPath.includes('/exhibition/') || urlPath.includes('/museum/')) category = 'exhibition';
             else if (urlPath.includes('/festival/')) category = 'festival';
             else if (urlPath.includes('/masterclass/') || urlPath.includes('/education/')) category = 'education';
+            else if (urlPath.includes('/cinema/')) category = 'cinema';
         }
 
         // Build URL
@@ -614,7 +637,7 @@ async function fetchCategoryPage(citySlug, category) {
 export async function fetchEvents(citySlug) {
     // The post is deliberately focused on the part of Afisha users asked for:
     // headline concerts, shows, festivals, theatre and stand-up.
-    const targetCategories = ['concert', 'show', 'festival', 'theater', 'standup'];
+    const targetCategories = ['concert', 'show', 'festival', 'theater', 'standup', 'exhibition', 'cinema'];
 
     try {
         // Fetch each category sequentially with delay
