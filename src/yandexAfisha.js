@@ -495,17 +495,26 @@ function filterEvents(events) {
         const title = (event.title || '').toLowerCase();
         const description = (event.description || '').toLowerCase();
         const tagCodes = (event.tagCodes || []).map(code => String(code).toLowerCase());
+        const isBroadAudienceShow = tagCodes.includes('circus_show')
+            || tagCodes.includes('topshows')
+            || /цирк|цирковое шоу/i.test(`${title} ${description}`);
 
-        const hasExcludedKeyword = FILTERS.excludeKeywords.some(keyword =>
-            title.includes(keyword.toLowerCase()) ||
-            description.includes(keyword.toLowerCase())
-        );
+        const hasExcludedKeyword = FILTERS.excludeKeywords.some(keyword => {
+            const normalizedKeyword = keyword.toLowerCase();
+            // "тур" is a standalone activity type, not a fragment: otherwise
+            // it accidentally matches "культурного" in valid descriptions.
+            if (normalizedKeyword === 'тур' || normalizedKeyword === 'tour') {
+                const standaloneTour = /(^|[^\p{L}\p{N}])(?:тур|tour)(?=$|[^\p{L}\p{N}])/iu;
+                return standaloneTour.test(title) || standaloneTour.test(description);
+            }
+            return title.includes(normalizedKeyword) || description.includes(normalizedKeyword);
+        });
 
         if (hasExcludedKeyword) return false;
-        if (/(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
+        if (!isBroadAudienceShow && /(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
         if (/(экскурси|обзорн(?:ая|ый)|прогулк[аи]\s+(?:по|с))/i.test(`${title} ${description}`)
             || event.site_url?.includes('/excursions/')) return false;
-        if (tagCodes.some(code => code === 'kids' || code === 'children' || code === 'childrens')) return false;
+        if (!isBroadAudienceShow && tagCodes.some(code => code === 'kids' || code === 'children' || code === 'childrens')) return false;
 
         // A regular cinema session is not an editorial weekend recommendation.
         // Keep film listings only for premieres, preview screenings and special
@@ -684,6 +693,22 @@ async function fetchCategoryPage(citySlug, category) {
 }
 
 /**
+ * Fetch the city showcase. It contains Afisha's cross-category editorial
+ * cards (circus, theatre and exhibitions) that may be absent from the narrow
+ * category listings.
+ */
+async function fetchCityShowcase(citySlug) {
+    const afishaCity = CITY_SLUGS[citySlug] || citySlug;
+    const url = `${YANDEX_AFISHA.baseUrl}/${afishaCity}`;
+
+    console.log(`📡 Fetching city showcase: ${url}`);
+    const apollo = await fetchApolloState(url);
+    if (!apollo) return [];
+
+    return parseEvents(apollo);
+}
+
+/**
  * Fetch events from Yandex Afisha — per-category for diversity
  * Sequential fetching with delays to avoid rate limiting
  */
@@ -693,8 +718,10 @@ export async function fetchEvents(citySlug) {
     const targetCategories = ['concert', 'show', 'festival', 'theater', 'standup', 'exhibition', 'cinema'];
 
     try {
-        // Fetch each category sequentially with delay
-        const categoryResults = [];
+        // Start with the city showcase, then add the narrow category pages.
+        // The showcase catches high-interest local cards that do not have a
+        // stable category page in smaller cities.
+        const categoryResults = [await fetchCityShowcase(citySlug)];
         for (const cat of targetCategories) {
             const events = await fetchCategoryPage(citySlug, cat);
             categoryResults.push(events);
