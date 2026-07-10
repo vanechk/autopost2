@@ -152,9 +152,17 @@ function filterWeekendEvents(events) {
 /** Reject listings whose venue explicitly belongs outside the requested city. */
 function filterCityVenue(events, citySlug) {
     const outsideMarker = OUT_OF_CITY_VENUE_MARKERS[citySlug];
-    if (!outsideMarker) return events;
+    const afishaCity = CITY_SLUGS[citySlug] || citySlug;
 
     return events.filter(event => {
+        // Apollo includes recommendation cards from other cities in the same
+        // cache. The event URL is the authoritative city signal for those.
+        if (event.site_url && !event.site_url.includes(`/${afishaCity}/`)) {
+            console.log(`📍 Skipping foreign-city event for ${citySlug}: ${event.title}`);
+            return false;
+        }
+
+        if (!outsideMarker) return true;
         const venue = `${event.place?.title || ''} ${event.place?.address || ''}`;
         if (!outsideMarker.test(venue)) return true;
 
@@ -387,9 +395,10 @@ function parseEvents(apollo) {
 
         // Determine event type from tags
         let category = 'other';
+        let tagCodes = [];
         const tagsKey = Object.keys(ep).find(k => k.startsWith('tags(') && k.includes('approved') && k.includes('reviewed'));
         if (tagsKey && Array.isArray(ep[tagsKey])) {
-            const tagCodes = ep[tagsKey].map(t => t.code).filter(Boolean);
+            tagCodes = ep[tagsKey].map(t => t.code).filter(Boolean);
             if (tagCodes.includes('concert')) category = 'concert';
             else if (tagCodes.includes('theatre') || tagCodes.includes('theater')) category = 'theater';
             else if (tagCodes.includes('exhibition')) category = 'exhibition';
@@ -446,6 +455,7 @@ function parseEvents(apollo) {
             site_url: eventUrl,
             place: place,
             categories: [category],
+            tagCodes: tagCodes,
             age_restriction: ep.contentRating || null,
             images: imageUrl ? [{ image: imageUrl }] : [],
             dates: dates,
@@ -465,6 +475,7 @@ function filterEvents(events) {
     return events.filter(event => {
         const title = (event.title || '').toLowerCase();
         const description = (event.description || '').toLowerCase();
+        const tagCodes = (event.tagCodes || []).map(code => String(code).toLowerCase());
 
         const hasExcludedKeyword = FILTERS.excludeKeywords.some(keyword =>
             title.includes(keyword.toLowerCase()) ||
@@ -473,6 +484,7 @@ function filterEvents(events) {
 
         if (hasExcludedKeyword) return false;
         if (/(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
+        if (tagCodes.some(code => code === 'kids' || code === 'children' || code === 'childrens')) return false;
 
         // Check price (parse number from price string)
         const priceNumbers = event.price.match(/\d[\d\s]*/);
