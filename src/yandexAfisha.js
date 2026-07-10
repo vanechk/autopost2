@@ -403,10 +403,10 @@ function parseEvents(apollo) {
             else if (tagCodes.includes('theatre') || tagCodes.includes('theater')) category = 'theater';
             else if (tagCodes.includes('exhibition')) category = 'exhibition';
             else if (tagCodes.includes('festival')) category = 'festival';
+            else if (tagCodes.includes('cinema')) category = 'cinema';
             else if (tagCodes.includes('standup')) category = 'standup';
             else if (tagCodes.includes('show')) category = 'show';
             else if (tagCodes.includes('master-class') || tagCodes.includes('masterclass') || tagCodes.includes('education')) category = 'education';
-            else if (tagCodes.includes('cinema')) category = 'cinema';
         }
 
         // Fallback: detect category from URL path
