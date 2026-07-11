@@ -680,10 +680,11 @@ export function selectDiverseEvents(events, count = 3) {
 /**
  * Fetch events for a single category from Yandex Afisha
  */
-async function fetchCategoryPage(citySlug, category) {
+async function fetchCategoryPage(citySlug, category, date = null) {
     const afishaCity = CITY_SLUGS[citySlug] || citySlug;
     const categoryPath = CATEGORY_PATHS[category] || category;
-    const url = `${YANDEX_AFISHA.baseUrl}/${afishaCity}/${categoryPath}`;
+    const query = date ? `?date=${encodeURIComponent(date)}` : '';
+    const url = `${YANDEX_AFISHA.baseUrl}/${afishaCity}/${categoryPath}${query}`;
 
     console.log(`📡 Fetching: ${url}`);
     const apollo = await fetchApolloState(url);
@@ -725,6 +726,14 @@ export async function fetchEvents(citySlug) {
         for (const cat of targetCategories) {
             const events = await fetchCategoryPage(citySlug, cat);
             categoryResults.push(events);
+            await new Promise(r => setTimeout(r, 350));
+        }
+
+        // Some headline concerts are absent from the default server-rendered
+        // category cache but appear on a date-specific listing (for example,
+        // ГУДТАЙМС in Simferopol on 12 July).
+        for (const date of getWeekendDateKeys()) {
+            categoryResults.push(await fetchCategoryPage(citySlug, 'concert', date));
             await new Promise(r => setTimeout(r, 350));
         }
 
