@@ -10,7 +10,8 @@ import {
 } from './database.js';
 import { fetchEvents, formatEventsMessage, fetchEventsByCategory, formatEventsPage } from './events.js';
 import { startScheduler } from './scheduler.js';
-import { isAdmin, generatePost, getPostImagePath } from './admin.js';
+import { isAdmin, generatePost } from './admin.js';
+import { sendPostWithPhoto } from './postMedia.js';
 import { readFileSync } from 'fs';
 
 // Check for bot token
@@ -154,30 +155,7 @@ bot.command('generate', async (ctx) => {
 
     try {
         const postText = await generatePost();
-        const imagePath = getPostImagePath();
-
-        try {
-            // "Hidden Link" trick for long posts with photo
-            // Using HTML format for cleaner text escaping
-            const IMAGE_URL = 'https://files.catbox.moe/kh2qko.jpg';
-            const postWithPhoto = `<a href="${IMAGE_URL}">&#8203;</a>${postText}`;
-
-            await ctx.reply(postWithPhoto, {
-                parse_mode: 'HTML',
-                link_preview_options: {
-                    is_disabled: false,
-                    show_above_text: true,
-                    url: IMAGE_URL
-                }
-            });
-        } catch (error) {
-            console.error('❌ Sending Error:', error.message);
-            // Fallback: send text only
-            await ctx.reply(postText, {
-                parse_mode: 'HTML',
-                disable_web_page_preview: true
-            });
-        }
+        await sendPostWithPhoto(ctx.telegram, ctx.chat.id, postText);
 
         await ctx.reply('✅ Пост сгенерирован!');
     } catch (error) {
