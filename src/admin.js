@@ -1,8 +1,11 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { fetchEvents } from './events.js';
-import { selectDiverseEvents } from './kudago.js';
-import { CITIES, MOVIES, RECIPES } from './config.js';
+import { getEditorialScore } from './kudago.js';
+import { curateEvents, normalizeTitle, scoreAfishaEvent } from './curation.js';
+import { getRecentPostedTitles } from './database.js';
+import { getWeekendKey } from './yandexAfisha.js';
+import { CITIES, CURATION, MOVIES, RECIPES } from './config.js';
 import { cleanDescription, cleanTitle, escapeHTML } from './textUtils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -104,6 +107,9 @@ export async function generatePost() {
 
     const fallbackCities = [];
     const cityResults = [];
+    // Titles from the last few posts: the same listing must not come back
+    // week after week (the regenerated weekend itself is not history).
+    const recentByCity = getRecentPostedTitles(CURATION.repeatWindowWeeks, getWeekendKey());
 
     // Cities are fetched strictly one after another: parallel city runs
     // multiply the request burst and get the IP banned by SmartCaptcha.
@@ -117,7 +123,14 @@ export async function generatePost() {
             console.error(`Error fetching events for ${slug}:`, error.message);
         }
 
-        const topEvents = selectDiverseEvents(events, 3);
+        const recentTitles = new Set((recentByCity[city.name] || []).map(normalizeTitle));
+        const topEvents = curateEvents(events, {
+            count: 3,
+            recentTitles,
+            // Fallback sources (KudaGo, GorodZovet) have no Afisha tags.
+            scoreFn: event => event.source === 'yandex_afisha' ? scoreAfishaEvent(event) : getEditorialScore(event),
+            label: slug
+        });
         if (!topEvents.some(event => event.source === 'yandex_afisha')) {
             fallbackCities.push(city.name);
         }

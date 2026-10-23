@@ -79,6 +79,29 @@ export function saveCachedPost(weekKey, postText) {
 }
 
 /**
+ * Titles posted per city in earlier weekly posts, parsed from the stored post
+ * text: { 'Москва': ['Моцарт при свечах. Ночь в Зальцбурге', ...] }.
+ * `excludeWeekKey` leaves out the weekend being (re)generated.
+ */
+export function getRecentPostedTitles(weeks, excludeWeekKey) {
+    const result = db.exec(
+        'SELECT week_key, post_text FROM weekly_posts WHERE week_key != ? ORDER BY week_key DESC LIMIT ?',
+        [excludeWeekKey, weeks]
+    );
+    const byCity = {};
+    if (result.length === 0) return byCity;
+
+    for (const [, text] of result[0].values) {
+        for (const section of String(text).split('🏠')[0].split('📍 <b>').slice(1)) {
+            const city = section.slice(0, section.indexOf('</b>'));
+            const titles = [...section.matchAll(/<a href="[^"]*">([^<]+)<\/a>/g)].map(m => m[1]);
+            byCity[city] = [...(byCity[city] || []), ...titles];
+        }
+    }
+    return byCity;
+}
+
+/**
  * Get or create user
  */
 export function getUser(telegramId, username = null) {

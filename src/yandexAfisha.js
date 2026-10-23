@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { YANDEX_AFISHA, FILTERS, HOLIDAYS } from './config.js';
-import { getEditorialScore } from './kudago.js';
+import { scoreAfishaEvent } from './curation.js';
 import { cleanTitle, cleanDescription, escapeHTML } from './textUtils.js';
 
 const execFileAsync = promisify(execFile);
@@ -334,7 +334,7 @@ async function fetchApolloState(url, retries = 2) {
  * Parse events from Apollo state cache
  * Resolves references between EventPreview, Ticket, PlacePreview, and Featured
  */
-function parseEvents(apollo) {
+export function parseEvents(apollo) {
     if (!apollo) return [];
 
     const keys = Object.keys(apollo);
@@ -540,16 +540,11 @@ function filterEvents(events) {
 
         const hasExcludedKeyword = FILTERS.excludeKeywords.some(keyword => {
             const normalizedKeyword = keyword.toLowerCase();
-            // "тур" is a standalone activity type, not a fragment: otherwise
-            // it accidentally matches "культурного" in valid descriptions.
-            if (normalizedKeyword === 'тур' || normalizedKeyword === 'tour') {
-                const standaloneTour = /(^|[^\p{L}\p{N}])(?:тур|tour)(?=$|[^\p{L}\p{N}])/iu;
-                return standaloneTour.test(title) || standaloneTour.test(description);
-            }
             return title.includes(normalizedKeyword) || description.includes(normalizedKeyword);
         });
 
         if (hasExcludedKeyword) return false;
+        if (FILTERS.excludeTravelTour.test(`${title} ${description}`)) return false;
         if (!isBroadAudienceShow && /(для детей|детск|семейн)/i.test(`${title} ${description}`)) return false;
         if (/(экскурси|обзорн(?:ая|ый)|прогулк[аи]\s+(?:по|с))/i.test(`${title} ${description}`)
             || event.site_url?.includes('/excursions/')) return false;
@@ -609,16 +604,8 @@ function sortEvents(events) {
     const rng = seededRandom(weekSeed);
 
     const scored = events.map(event => {
-        let score = getEditorialScore(event);
-        const tagCodes = (event.tagCodes || []).map(code => String(code).toLowerCase());
-
-        // Afisha-specific signals for events people actively plan around.
-        if (tagCodes.includes('artist-tour')) score += 10;
-        if (tagCodes.includes('hot')) score += 8;
-        if (tagCodes.includes('festival-concert')) score += 6;
-
         // Keep only a small deterministic rotation for equally strong cards.
-        score += rng() * 3;
+        const score = scoreAfishaEvent(event) + rng() * 3;
 
         return { event, score };
     });
@@ -729,7 +716,42 @@ async function fetchCategoryPage(citySlug, category, date = null) {
     const apollo = await fetchApolloState(url);
     if (!apollo) return [];
 
-    return parseEvents(apollo);
+    const events = parseEvents(apollo);
+    // The undated rubric page carries Afisha's popularity-ranked list of the
+    // whole rubric (~500 ids). Only a dozen cards are rendered, but the rank
+    // is the best "people actually go to this" signal we have.
+    if (!date) {
+        const rank = getRubricRank(apollo);
+        for (const event of events) {
+            if (rank.has(event.id)) event.popularityRank = rank.get(event.id);
+        }
+    }
+    return events;
+}
+
+/** Map of event id → position in the rubric's ranked id list. */
+function getRubricRank(apollo) {
+    const root = apollo?.ROOT_QUERY || {};
+    const key = Object.keys(root).find(k => k.startsWith('rubricEventIds('));
+    const rank = new Map();
+    (root[key] || []).forEach((ref, index) => {
+        const id = String(ref?.__ref || '').split(':')[1];
+        if (id && !rank.has(id)) rank.set(id, index);
+    });
+    return rank;
+}
+
+/** Ranks of every listing in the cached rubric lists, by event id. */
+function collectRanks(pages) {
+    const ranks = new Map();
+    for (const events of pages) {
+        for (const event of events) {
+            if (!Number.isInteger(event.popularityRank)) continue;
+            const current = ranks.get(event.id);
+            if (current === undefined || event.popularityRank < current) ranks.set(event.id, event.popularityRank);
+        }
+    }
+    return ranks;
 }
 
 /**
@@ -773,22 +795,27 @@ export async function fetchEvents(citySlug) {
             await new Promise(r => setTimeout(r, 1500));
         }
 
-        // Some headline concerts are absent from the default server-rendered
-        // category cache but appear on a date-specific listing (for example,
-        // ГУДТАЙМС in Simferopol on 12 July).
+        // Headline concerts and solo stand-up mostly live on date-specific
+        // listings, not in the default server-rendered rubric (for example,
+        // Сергей Лазарев in Moscow or ГУДТАЙМС in Simferopol on 12 July).
         for (const date of getWeekendDateKeys()) {
-            if (isAfishaBlocked()) break;
-            categoryResults.push(await fetchCategoryPage(citySlug, 'concert', date));
-            await new Promise(r => setTimeout(r, 1500));
+            for (const cat of ['concert', 'standup']) {
+                if (isAfishaBlocked()) break;
+                categoryResults.push(await fetchCategoryPage(citySlug, cat, date));
+                await new Promise(r => setTimeout(r, 1500));
+            }
         }
 
-        // Merge and deduplicate
+        // Merge and deduplicate. A date page often has the card with full
+        // schedule while the rubric page has its rank: keep both.
+        const ranks = collectRanks(categoryResults);
         const seenIds = new Set();
         let allEvents = [];
         for (const events of categoryResults) {
             for (const event of events) {
-                if (!seenIds.has(event.id)) {
+                if (!seenIds.has(event.id) && event.title && event.title !== 'Без названия') {
                     seenIds.add(event.id);
+                    if (ranks.has(event.id)) event.popularityRank = ranks.get(event.id);
                     allEvents.push(event);
                 }
             }
@@ -805,12 +832,10 @@ export async function fetchEvents(citySlug) {
         allEvents = filterCityVenue(allEvents, citySlug);
         allEvents = filterEvents(allEvents);
 
-        // If the city page has fewer than two useful cards, supplement it
-        // with the configured nearby area. Two strong local recommendations
-        // are preferable to a slow, low-signal regional fill. We skip cinema:
-        // primary-city premieres are still allowed, but regional expansion is
-        // for real events people would travel for.
-        if (allEvents.length < 2 && REGIONAL_BACKFILL_SLUGS[citySlug] && !isAfishaBlocked()) {
+        // If the city page cannot fill a three-item card, supplement it with
+        // the configured nearby area (Yalta/Sevastopol for Simferopol,
+        // Togliatti for Samara).
+        if (allEvents.length < 3 && REGIONAL_BACKFILL_SLUGS[citySlug] && !isAfishaBlocked()) {
             const seenIds = new Set(allEvents.map(event => event.id));
             for (const nearbyCity of REGIONAL_BACKFILL_SLUGS[citySlug]) {
                 if (isAfishaBlocked()) break;

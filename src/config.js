@@ -51,10 +51,62 @@ export const HOLIDAYS = [
  * Event filtering configuration
  */
 export const FILTERS = {
-    excludeKeywords: ['стриптиз', 'casino', '18+', 'night club', 'afterparty', 'эротик', 'казино', 'тур', 'tour'],
+    // "тур" is deliberately NOT a keyword: Afisha describes every headline
+    // concert as «Тур „Шоумен“», so it silently removed artists on tour.
+    excludeKeywords: ['стриптиз', 'casino', '18+', 'night club', 'afterparty', 'эротик', 'казино'],
+    // Travel tours (bus, walking, gastro) are still out.
+    excludeTravelTour: /(?:автобусн|экскурсионн|пешеходн|гастрономическ|винн|туристическ)\S*\s+(?:тур|tour)|(?:^|[^\p{L}])тур\s+(?:по|выходного дня)/iu,
     // The old ceiling removed most large concerts and shows before ranking.
     maxPrice: 8000,
-    maxEvents: 10
+    // Candidates handed to curation per city (the post shows three).
+    maxEvents: 40
+};
+
+/**
+ * Weekly post curation (see src/curation.js). The post goes to a team of
+ * colleagues: calm, broadly liked, and different every week.
+ */
+export const CURATION = {
+    // Do not repeat a listing that ran in this city within N weeks.
+    repeatWindowWeeks: 6,
+    // Below this an event only fills a card that would otherwise be short.
+    minScore: 25,
+    // A stand-up / theatre / show takes the third slot instead of a third
+    // concert when it scores at least this much.
+    alternativeMinScore: 60,
+
+    // Afisha genre tags that never go into the team post.
+    blockedTags: ['chanson', 'spiritual_music', 'karaoke'],
+    blockedKeywords: ['шансон', 'блатн', 'тюремн', 'лагерн', 'воровск', 'бутырк', 'лесоповал'],
+    // Provocative, explicit or politically loaded acts. Whole-word match on
+    // the listing title, so "Ленинград" does not hit "Ленинградская симфония".
+    blockedArtists: [
+        'Воровайки', 'Бутырка', 'Лесоповал', 'Михаил Круг', 'Сектор газа', 'Ленинград',
+        'Шнуров', 'Шаман', 'Shaman', 'Быдлоцыкл', 'АК-47', 'ТГК', 'Кровосток',
+        'Инстасамка', 'Instasamka', 'Моргенштерн', 'Morgenshtern', 'Слава КПСС', 'Замай',
+        'Порнофильмы', 'Пошлая Молли', 'Хаски', 'Big Baby Tape', 'Kizaru',
+        'Ярослав Сумишевский', 'Сумишевский', 'Григорий Лепс', 'Стас Михайлов', 'Елена Ваенга',
+        'Радио Тапок', 'Radio Tapok', 'Чёрный обелиск', 'Catharsis', 'Коррозия металла',
+        'Монгол Шуудан', 'Северный флот'
+    ],
+
+    categoryBase: {
+        concert: 40, standup: 36, show: 34, festival: 34, theater: 32, exhibition: 12, education: -20, other: 0
+    },
+    // Afisha tag signals of a listing people actually plan around.
+    tagWeights: {
+        'artist-tour': 28, 'hot': 14, 'top-persons': 10, 'yandexafisha-choice': 10, 'topshows': 8,
+        'high-rated': 8, 'season-premiere': 6, 'standup-solo': 8, 'big-tickets-theatre': 4,
+        // Anonymous "big stand-up night" line-ups run every weekend.
+        'standup-collective': -12,
+        // Loud or niche genres are allowed but should not lead a team post.
+        'metal': -25, 'punk': -20, 'tehno': -15, 'house': -10, 'kids': -60, 'family-events': -30
+    },
+    // Generic programmes: candlelight concerts, orchestras covering other
+    // people's music, film-score nights, tribute shows.
+    genericTags: ['tribute', 'soundtrack', 'symphony-show', 'koncerty-imperial-orchestra', 'music-show'],
+    genericTitlePattern: /при свечах|в свечах|в исполнении|оркестр|хиты|трибьют|tribute|кавер|cover|музыка (?:из|к|людовико|ханса)|вселенная|симфони[яи] |в планетарии|под куполом|погружение|величайш|легенд(?:ы|арн)|шоу (?:японских|барабанов)/i,
+    folkEnsemblePattern: /(?:^|\s)хор(?:\s|$|а\s)|ансамбль (?:песни|танца)|песни и пляски|казач|хореографический ансамбль/i
 };
 
 /**
@@ -183,7 +235,7 @@ export const RECIPES = [
     { "title": "Австрийский чечевичный суп", "desc": "согревающий обед с богатым вкусом", "url": "https://www.gastronom.ru/recipe/11719/avstrijskij-chechevichnyj-sup" },
     { "title": "Ачма от шефа", "desc": "сытный сырный пирог", "url": "https://www.gastronom.ru/recipe/39416/achma" },
     { "title": "Азу из свинины", "desc": "сытное основное блюдо для ужина", "url": "https://www.gastronom.ru/recipe/56395/azu-iz-svininy" },
-    { "title": "Авокадо with икрой", "desc": "изысканная закуска для особого случая", "url": "https://www.gastronom.ru/recipe/6914/avokado-s-ikroj" },
+    { "title": "Авокадо с икрой", "desc": "изысканная закуска для особого случая", "url": "https://www.gastronom.ru/recipe/6914/avokado-s-ikroj" },
     { "title": "Апельсиновые оладьи без яиц", "desc": "легкий завтрак для всей семьи", "url": "https://www.gastronom.ru/recipe/25443/apelsinovye-oladi-bez-yaic" },
     { "title": "Авокадо-бургер", "desc": "оригинальная альтернатива классике", "url": "https://www.gastronom.ru/recipe/62140/avokado-burger" },
     { "title": "Ананасовые кольца с креветками", "desc": "экзотическая закуска для праздника", "url": "https://www.gastronom.ru/recipe/19165/ananasovye-kolca-s-krevetkami" },
@@ -201,22 +253,22 @@ export const RECIPES = [
     { "title": "Анжулькин картофель", "desc": "простой и вкусный гарнир", "url": "https://www.gastronom.ru/recipe/11713/anzhulkin-kartofel" },
     { "title": "Александровская полоска", "desc": "легендарное пирожное из детства", "url": "https://www.gastronom.ru/recipe/32804/aleksandrovskaja-poloska" },
     { "title": "Апфельмусс-торт", "desc": "нежный десерт для всей семьи", "url": "https://www.gastronom.ru/recipe/39173/apfelmuss-tort" },
-    { "title": "Арахисовые капкейки with арахисовым кремом", "desc": "нежный десерт для всей семьи", "url": "https://www.gastronom.ru/recipe/19063/arahisovye-kapkejki-s-arahisovym-kremom" },
-    { "title": "Армянский суп with фрикадельками Кололик", "desc": "согревающий обед с богатым вкусом", "url": "https://www.gastronom.ru/recipe/54238/armyanskij-sup-s-frikadelkami-kololik" },
+    { "title": "Арахисовые капкейки с арахисовым кремом", "desc": "нежный десерт для всей семьи", "url": "https://www.gastronom.ru/recipe/19063/arahisovye-kapkejki-s-arahisovym-kremom" },
+    { "title": "Армянский суп с фрикадельками Кололик", "desc": "согревающий обед с богатым вкусом", "url": "https://www.gastronom.ru/recipe/54238/armyanskij-sup-s-frikadelkami-kololik" },
     { "title": "Аппетитные тосты", "desc": "быстрый завтрак на каждый день", "url": "https://www.gastronom.ru/recipe/52390/appetitnye-tosty" },
     { "title": "Арахисовые оладьи", "desc": "необычный завтрак для всей семьи", "url": "https://www.gastronom.ru/recipe/61656/arahisovye-oladi" },
-    { "title": "Ароматная утка with картошкой в рукаве", "desc": "сытное основное блюдо для ужина", "url": "https://www.gastronom.ru/recipe/54284/aromatnaja-utka-s-kartoshkoj-v-rukave" },
+    { "title": "Ароматная утка с картошкой в рукаве", "desc": "сытное основное блюдо для ужина", "url": "https://www.gastronom.ru/recipe/54284/aromatnaja-utka-s-kartoshkoj-v-rukave" },
     { "title": "Азиатские рулетики со свининой для дружеской вечеринки", "desc": "отличная закуска для компании", "url": "https://www.gastronom.ru/recipe/45861/aziatskie-ruletiki-so-svininoj-dlya-druzheskoj-vecherinki" },
     { "title": "Австрийский компот из инжира", "desc": "необычный и полезный напиток", "url": "https://www.gastronom.ru/recipe/25020/avstrijskij-kompot-iz-inzhira" },
     { "title": "Айнтопф со свиными рёбрышками", "desc": "густой и сытный суп", "url": "https://www.gastronom.ru/recipe/38631/ajntopf" },
-    { "title": "Авокадо with мясом сурими", "desc": "легкая и быстрая закуска", "url": "https://www.gastronom.ru/recipe/19300/avokado-s-myasom-surimi" },
+    { "title": "Авокадо с мясом сурими", "desc": "легкая и быстрая закуска", "url": "https://www.gastronom.ru/recipe/19300/avokado-s-myasom-surimi" },
     { "title": "Абрикосовые кексы", "desc": "нежный десерт для всей семьи", "url": "https://www.gastronom.ru/recipe/50881/abrikosovye-keksy" },
     { "title": "Ананасовая сальса к мясу", "desc": "пикантный соус для барбекю", "url": "https://www.gastronom.ru/recipe/22484/ananasovaya-salsa-k-myasu" },
     { "title": "Ахи-поке или Суши по-гавайски", "desc": "модное и полезное блюдо", "url": "https://www.gastronom.ru/recipe/43142/ahi-poki-ili-sushi-po-gavajski-" },
-    { "title": "Английский суп из чечевицы with пастернаком, яблоками и голубым сыром", "desc": "изысканный согревающий обед", "url": "https://www.gastronom.ru/recipe/50600/anglijskij-sup-iz-chechevicy-s-pasternakom-yablokami-i-golubym-syrom" },
+    { "title": "Английский суп из чечевицы с пастернаком, яблоками и голубым сыром", "desc": "изысканный согревающий обед", "url": "https://www.gastronom.ru/recipe/50600/anglijskij-sup-iz-chechevicy-s-pasternakom-yablokami-i-golubym-syrom" },
     { "title": "Альтернатива Мимозе и Селедке под шубой - новогодний салат с лососем", "desc": "свежий взгляд на традицию", "url": "https://www.gastronom.ru/recipe/39006/novogodnij-salat-s-lososem" },
     { "title": "Австрийский штоллен", "desc": "традиционная рождественская выпечка", "url": "https://www.gastronom.ru/recipe/50426/avstrijskij-shtollen" },
     { "title": "Астурианская фабада", "desc": "классика испанской кухни", "url": "https://www.gastronom.ru/recipe/18788/asturianskaya-fabada" },
-    { "title": "Авокадо with огуречным кремом и креветками", "desc": "нежная праздничная закуска", "url": "https://www.gastronom.ru/recipe/5118/avokado-s-ogurechnym-kremom-i-krevetkami" },
-    { "title": "Американское печенье with орехами и корицей", "desc": "ароматное лакомство к чаю", "url": "https://www.gastronom.ru/recipe/42659/amerikanskoe-pechene-s-orehami-i-koricej" }
+    { "title": "Авокадо с огуречным кремом и креветками", "desc": "нежная праздничная закуска", "url": "https://www.gastronom.ru/recipe/5118/avokado-s-ogurechnym-kremom-i-krevetkami" },
+    { "title": "Американское печенье с орехами и корицей", "desc": "ароматное лакомство к чаю", "url": "https://www.gastronom.ru/recipe/42659/amerikanskoe-pechene-s-orehami-i-koricej" }
 ];
