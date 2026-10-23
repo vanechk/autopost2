@@ -1,4 +1,10 @@
 import 'dotenv/config';
+import dns from 'node:dns';
+import https from 'node:https';
+// Server has no IPv6 route to api.telegram.org, so Node's dual-stack resolution
+// wastes time/fails on AAAA. Force IPv4 at both the DNS and the HTTP agent level.
+dns.setDefaultResultOrder('ipv4first');
+const telegramAgent = new https.Agent({ family: 4, keepAlive: true });
 import { Telegraf, Markup } from 'telegraf';
 import { CITIES } from './config.js';
 import {
@@ -6,9 +12,12 @@ import {
     getUser,
     setUserCity,
     subscribeUser,
-    unsubscribeUser
+    unsubscribeUser,
+    getCachedPost,
+    saveCachedPost
 } from './database.js';
 import { fetchEvents, formatEventsMessage, fetchEventsByCategory, formatEventsPage } from './events.js';
+import { getWeekendKey } from './yandexAfisha.js';
 import { startScheduler } from './scheduler.js';
 import { isAdmin, generatePost } from './admin.js';
 import { sendPostWithPhoto } from './postMedia.js';
@@ -20,8 +29,10 @@ if (!process.env.BOT_TOKEN) {
     process.exit(1);
 }
 
-// Initialize bot
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// Initialize bot (pin Telegram HTTP client to IPv4 — see agent creation above)
+const bot = new Telegraf(process.env.BOT_TOKEN, {
+    telegram: { agent: telegramAgent }
+});
 
 // Debug middleware to log all incoming updates
 bot.use(async (ctx, next) => {
@@ -143,7 +154,28 @@ bot.command('unsubscribe', async (ctx) => {
 });
 
 /**
- * /generate command - Admin only: Generate post with events
+ * Build the weekly post: return the cached one for this weekend,
+ * or generate a fresh one (forceFresh rebuilds unconditionally).
+ * A post built from fallback sources (Afisha down/banned) is NOT cached,
+ * so the next /generate retries Afisha instead of locking the bad post in.
+ */
+async function getWeeklyPost(forceFresh = false) {
+    const weekKey = getWeekendKey();
+
+    if (!forceFresh) {
+        const cached = getCachedPost(weekKey);
+        if (cached) return { postText: cached, fromCache: true, fallbackCities: [] };
+    }
+
+    const { text, fallbackCities } = await generatePost();
+    if (fallbackCities.length === 0) {
+        saveCachedPost(weekKey, text);
+    }
+    return { postText: text, fromCache: false, fallbackCities };
+}
+
+/**
+ * /generate command - Admin only: weekly post (cached per weekend)
  */
 bot.command('generate', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
@@ -151,13 +183,18 @@ bot.command('generate', async (ctx) => {
         return;
     }
 
-    await ctx.reply('⏳ Генерирую пост. Это может занять несколько секунд.');
+    await ctx.reply('⏳ Готовлю пост...');
 
     try {
-        const postText = await generatePost();
+        const { postText, fromCache, fallbackCities } = await getWeeklyPost();
         await sendPostWithPhoto(ctx.telegram, ctx.chat.id, postText);
-
-        await ctx.reply('✅ Пост сгенерирован!');
+        if (fromCache) {
+            await ctx.reply('✅ Пост этой недели (из кэша). Пересобрать заново: /regenerate');
+        } else if (fallbackCities.length > 0) {
+            await ctx.reply(`⚠️ Афиша недоступна для: ${fallbackCities.join(', ')} — использованы запасные источники.\nПост НЕ сохранён в кэш, следующий /generate попробует Афишу снова.`);
+        } else {
+            await ctx.reply('✅ Пост сгенерирован и сохранён для этой недели!');
+        }
     } catch (error) {
         console.error('❌ Generator Error:', error);
         if (error.response && error.response.description) {
@@ -166,6 +203,31 @@ bot.command('generate', async (ctx) => {
         } else {
             await ctx.reply(`❌ Ошибка: ${error.message}`);
         }
+    }
+});
+
+/**
+ * /regenerate command - Admin only: force-rebuild this week's post
+ */
+bot.command('regenerate', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        await ctx.reply('⛔ Эта команда доступна только администратору.');
+        return;
+    }
+
+    await ctx.reply('⏳ Пересобираю пост заново. Это может занять пару минут.');
+
+    try {
+        const { postText, fallbackCities } = await getWeeklyPost(true);
+        await sendPostWithPhoto(ctx.telegram, ctx.chat.id, postText);
+        if (fallbackCities.length > 0) {
+            await ctx.reply(`⚠️ Афиша недоступна для: ${fallbackCities.join(', ')} — использованы запасные источники.\nПост НЕ сохранён в кэш, попробуйте /regenerate позже (бан обычно спадает за 15–60 минут).`);
+        } else {
+            await ctx.reply('✅ Пост пересобран и сохранён для этой недели!');
+        }
+    } catch (error) {
+        console.error('❌ Generator Error:', error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
     }
 });
 
@@ -182,7 +244,8 @@ bot.command('help', async (ctx) => {
 
     if (isAdmin(ctx.from.id)) {
         helpText += `\n\n🔐 *Команды админа:*\n` +
-            `/generate - Сгенерировать пост`;
+            `/generate - Пост этой недели (из кэша)\n` +
+            `/regenerate - Пересобрать пост заново`;
     }
 
     await ctx.reply(helpText, { parse_mode: 'Markdown' });
@@ -308,18 +371,37 @@ async function main() {
     // Initialize database (async)
     await initDatabase();
 
-    // Register bot commands menu
-    await bot.telegram.setMyCommands([
-        { command: 'start', description: '🏠 Начать — выбрать город и категорию' },
-        { command: 'weekend', description: '🎉 Мероприятия на выходные' },
-        { command: 'subscribe', description: '🔔 Подписаться на рассылку' },
-        { command: 'unsubscribe', description: '🔕 Отписаться от рассылки' },
-        { command: 'help', description: '❓ Справка' }
-    ]);
+    // Register bot commands menu (non-critical — don't let network flakiness crash startup)
+    try {
+        await bot.telegram.setMyCommands([
+            { command: 'start', description: '🏠 Начать — выбрать город и категорию' },
+            { command: 'weekend', description: '🎉 Мероприятия на выходные' },
+            { command: 'subscribe', description: '🔔 Подписаться на рассылку' },
+            { command: 'unsubscribe', description: '🔕 Отписаться от рассылки' },
+            { command: 'help', description: '❓ Справка' }
+        ]);
+    } catch (err) {
+        console.error('⚠️  setMyCommands failed (non-fatal):', err.message);
+    }
 
-    // Start bot
+    // Start bot with retry — Telegraf's launch() does an initial getMe that can ETIMEDOUT
+    // on flaky networks; if we don't retry, the process ends up "online" but never polling.
     console.log('🚀 Starting bot...');
-    bot.launch();
+    const launchPromise = (async () => {
+        for (let attempt = 1; ; attempt++) {
+            try {
+                await bot.launch();
+                return;
+            } catch (err) {
+                console.error(`⚠️  bot.launch() attempt ${attempt} failed: ${err.message}. Retrying in 5s...`);
+                await new Promise((r) => setTimeout(r, 5000));
+            }
+        }
+    })();
+    launchPromise.catch((err) => {
+        console.error('❌ bot.launch() permanently failed:', err);
+        process.exit(1);
+    });
 
     // Start scheduler
     startScheduler(bot);
@@ -331,4 +413,13 @@ async function main() {
     console.log('✅ Bot is running!');
 }
 
-main().catch(console.error);
+// Fail-fast on unhandled rejections so pm2 restarts instead of a zombie "online" process
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled rejection:', reason);
+    process.exit(1);
+});
+
+main().catch((err) => {
+    console.error('❌ main() failed:', err);
+    process.exit(1);
+});

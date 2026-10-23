@@ -49,8 +49,33 @@ export async function initDatabase() {
         )
     `);
 
+    db.run(`
+        CREATE TABLE IF NOT EXISTS weekly_posts (
+            week_key TEXT PRIMARY KEY,
+            post_text TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
     saveDatabase();
     console.log('✅ Database initialized');
+}
+
+/**
+ * Get the cached weekly post for the given weekend key (YYYY-MM-DD of its first day)
+ */
+export function getCachedPost(weekKey) {
+    const result = db.exec('SELECT post_text FROM weekly_posts WHERE week_key = ?', [weekKey]);
+    if (result.length === 0 || result[0].values.length === 0) return null;
+    return result[0].values[0][0];
+}
+
+/**
+ * Save (or replace) the cached weekly post for the given weekend key
+ */
+export function saveCachedPost(weekKey, postText) {
+    db.run('INSERT OR REPLACE INTO weekly_posts (week_key, post_text) VALUES (?, ?)', [weekKey, postText]);
+    saveDatabase();
 }
 
 /**

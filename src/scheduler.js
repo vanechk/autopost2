@@ -13,10 +13,17 @@ async function sendWeeklyNotifications(bot) {
     const subscribers = getSubscribedUsers();
     console.log(`Found ${subscribers.length} subscribers`);
 
+    // Fetch each city once and reuse: fetching per subscriber repeats the
+    // full Afisha crawl and gets the IP banned.
+    const eventsByCity = new Map();
+
     for (const user of subscribers) {
         try {
             const city = CITIES[user.city_slug] || CITIES.msk;
-            const events = await fetchEvents(city.slug);
+            if (!eventsByCity.has(city.slug)) {
+                eventsByCity.set(city.slug, await fetchEvents(city.slug));
+            }
+            const events = eventsByCity.get(city.slug);
             const message = formatEventsMessage(events, city.slug);
 
             await bot.telegram.sendMessage(user.telegram_id, message, {

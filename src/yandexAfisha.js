@@ -139,6 +139,17 @@ function getWeekendDatesFormatted() {
     return `с ${startStr} - ${endStr}`;
 }
 
+/**
+ * Stable cache key for the upcoming weekend: YYYY-MM-DD of its first day.
+ * Every generation between two weekends resolves to the same key, so the
+ * weekly post can be built once and reused.
+ */
+export function getWeekendKey() {
+    const { startDate } = getWeekendDates();
+    const pad = n => String(n).padStart(2, '0');
+    return `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`;
+}
+
 /** Get local YYYY-MM-DD keys for the current weekend/adjacent holidays. */
 function getWeekendDateKeys() {
     const { startDate, endDate } = getWeekendDates();
@@ -242,15 +253,33 @@ async function fetchAfishaHtml(url) {
     const python = process.env.YANDEX_AFISHA_PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
     const { stdout } = await execFileAsync(python, [FETCH_SCRIPT, url], {
         maxBuffer: 2 * 1024 * 1024,
-        timeout: 45000
+        timeout: 45000,
+        // Pass AFISHA_PROXY (and the rest of the env) through to the fetcher
+        // so requests can egress via a proxy when the server IP is blocked.
+        env: process.env
     });
     return stdout;
+}
+
+// SmartCaptcha ban circuit breaker: once Yandex starts answering 403, every
+// further request only prolongs the ban. Stop touching Afisha for a while and
+// let the fallback sources serve the run.
+const BAN_COOLDOWN_MS = 15 * 60 * 1000;
+let afishaBlockedUntil = 0;
+
+export function isAfishaBlocked() {
+    return Date.now() < afishaBlockedUntil;
 }
 
 /**
  * Extract __APOLLO_STATE__ embedded in an Afisha event listing page.
  */
 async function fetchApolloState(url, retries = 2) {
+    if (isAfishaBlocked()) {
+        console.warn(`⛔ Afisha in ban cooldown, skipping: ${url}`);
+        return null;
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
             if (attempt > 0) {
@@ -283,6 +312,13 @@ async function fetchApolloState(url, retries = 2) {
 
             throw new Error('__APOLLO_STATE__ not found');
         } catch (error) {
+            // 403 means the IP is banned by SmartCaptcha — retrying makes the
+            // ban longer, so trip the breaker and bail out immediately.
+            if (/403/.test(error.message || '')) {
+                afishaBlockedUntil = Date.now() + BAN_COOLDOWN_MS;
+                console.error(`⛔ Afisha returned 403 (IP banned). Pausing Afisha requests for ${BAN_COOLDOWN_MS / 60000} min.`);
+                return null;
+            }
             if (attempt >= retries) {
                 console.error(`❌ Yandex Afisha fetch error (${url}):`, error.message);
                 return null;
@@ -351,8 +387,11 @@ function parseEvents(apollo) {
             if (ticket?.price) {
                 const minRub = Math.round(ticket.price.min / 100);
                 const maxRub = Math.round(ticket.price.max / 100);
-                if (minRub === 0) {
+                if (minRub === 0 && maxRub === 0) {
                     priceStr = 'Бесплатно';
+                } else if (minRub === 0) {
+                    // min=0 обычно означает льготные категории, а не свободный вход
+                    priceStr = `до ${maxRub.toLocaleString('ru-RU')} ₽`;
                 } else if (minRub === maxRub) {
                     priceStr = `${minRub.toLocaleString('ru-RU')} ₽`;
                 } else {
@@ -715,8 +754,10 @@ async function fetchCityShowcase(citySlug) {
  */
 export async function fetchEvents(citySlug) {
     // The post is deliberately focused on the part of Afisha users asked for:
-    // headline concerts, shows, festivals, theatre and stand-up.
-    const targetCategories = ['concert', 'show', 'festival', 'theater', 'standup', 'exhibition', 'cinema'];
+    // headline concerts, shows, festivals, theatre and stand-up. Cinema is
+    // excluded: the weekly post has its own at-home movie section, and film
+    // premieres were crowding out real local events.
+    const targetCategories = ['concert', 'show', 'festival', 'theater', 'standup', 'exhibition'];
 
     try {
         // Start with the city showcase, then add the narrow category pages.
@@ -724,17 +765,21 @@ export async function fetchEvents(citySlug) {
         // stable category page in smaller cities.
         const categoryResults = [await fetchCityShowcase(citySlug)];
         for (const cat of targetCategories) {
+            if (isAfishaBlocked()) break;
             const events = await fetchCategoryPage(citySlug, cat);
             categoryResults.push(events);
-            await new Promise(r => setTimeout(r, 350));
+            // Gentle pacing: bursts of fast requests are what triggers the
+            // SmartCaptcha IP ban.
+            await new Promise(r => setTimeout(r, 1500));
         }
 
         // Some headline concerts are absent from the default server-rendered
         // category cache but appear on a date-specific listing (for example,
         // ГУДТАЙМС in Simferopol on 12 July).
         for (const date of getWeekendDateKeys()) {
+            if (isAfishaBlocked()) break;
             categoryResults.push(await fetchCategoryPage(citySlug, 'concert', date));
-            await new Promise(r => setTimeout(r, 350));
+            await new Promise(r => setTimeout(r, 1500));
         }
 
         // Merge and deduplicate
@@ -749,6 +794,10 @@ export async function fetchEvents(citySlug) {
             }
         }
 
+        // The city showcase can still surface film premieres — keep the
+        // weekly post cinema-free (see targetCategories above).
+        allEvents = allEvents.filter(event => !event.categories?.includes('cinema'));
+
         // Only events that are actually happening this weekend may reach the
         // editorial ranking. Category pages otherwise include announcements
         // several months ahead.
@@ -756,16 +805,21 @@ export async function fetchEvents(citySlug) {
         allEvents = filterCityVenue(allEvents, citySlug);
         allEvents = filterEvents(allEvents);
 
-        // If the city page has fewer than three useful cards, supplement it
-        // with the configured nearby area. We deliberately skip cinema here:
+        // If the city page has fewer than two useful cards, supplement it
+        // with the configured nearby area. Two strong local recommendations
+        // are preferable to a slow, low-signal regional fill. We skip cinema:
         // primary-city premieres are still allowed, but regional expansion is
         // for real events people would travel for.
-        if (allEvents.length < 3 && REGIONAL_BACKFILL_SLUGS[citySlug]) {
+        if (allEvents.length < 2 && REGIONAL_BACKFILL_SLUGS[citySlug] && !isAfishaBlocked()) {
             const seenIds = new Set(allEvents.map(event => event.id));
             for (const nearbyCity of REGIONAL_BACKFILL_SLUGS[citySlug]) {
-                const nearbyResults = await Promise.all(
-                    REGIONAL_BACKFILL_CATEGORIES.map(category => fetchCategoryPage(nearbyCity, category))
-                );
+                if (isAfishaBlocked()) break;
+                const nearbyResults = [];
+                for (const category of REGIONAL_BACKFILL_CATEGORIES) {
+                    if (isAfishaBlocked()) break;
+                    nearbyResults.push(await fetchCategoryPage(nearbyCity, category));
+                    await new Promise(r => setTimeout(r, 1500));
+                }
                 const nearbyEvents = nearbyResults.flat();
 
                 const qualifiedNearbyEvents = filterEvents(
@@ -803,9 +857,14 @@ export async function fetchEventsByCategory(citySlug, category, page = 0, perPag
 
         if (category === 'all') {
             const targetCategories = Object.keys(CATEGORY_PATHS);
-            const categoryResults = await Promise.all(
-                targetCategories.map(cat => fetchCategoryPage(citySlug, cat))
-            );
+            // Sequential with pacing — a parallel burst of 8 requests is a
+            // fast way to get the IP banned by SmartCaptcha.
+            const categoryResults = [];
+            for (const cat of targetCategories) {
+                if (isAfishaBlocked()) break;
+                categoryResults.push(await fetchCategoryPage(citySlug, cat));
+                await new Promise(r => setTimeout(r, 800));
+            }
             const seenIds = new Set();
             allEvents = [];
             for (const events of categoryResults) {

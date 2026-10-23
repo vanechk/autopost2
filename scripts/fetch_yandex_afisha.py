@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Fetch a Yandex Afisha page with a browser-compatible TLS fingerprint."""
+"""Fetch a Yandex Afisha page with a browser-compatible TLS fingerprint.
 
+Optional egress proxy: set AFISHA_PROXY to route requests through a different
+IP (e.g. socks5://user:pass@host:port or http://host:port). Used to work around
+the server IP being rate-limited/blocked by SmartCaptcha.
+"""
+
+import os
 import sys
 from urllib.parse import urlparse
 
@@ -16,6 +22,9 @@ def main() -> None:
     if parsed.scheme != "https" or parsed.netloc != "afisha.yandex.ru":
         raise SystemExit("Only https://afisha.yandex.ru URLs are allowed")
 
+    proxy = os.environ.get("AFISHA_PROXY", "").strip()
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+
     response = requests.get(
         url,
         impersonate="chrome",
@@ -23,6 +32,7 @@ def main() -> None:
             "Accept-Language": "ru-RU,ru;q=0.9",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
+        proxies=proxies,
         timeout=30,
     )
     response.raise_for_status()

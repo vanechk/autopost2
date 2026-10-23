@@ -8,14 +8,16 @@ import { cleanDescription, cleanTitle, escapeHTML } from './textUtils.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const POST_IMAGE_PATH = join(__dirname, '..', 'Post', 'telegram-cloud-photo-size-2-5192667404658479432-y.jpg');
 
-// Admin ID from environment
-const ADMIN_ID = process.env.ADMIN_ID ? parseInt(process.env.ADMIN_ID) : null;
+// Admin IDs from environment (supports multiple comma-separated IDs)
+const ADMIN_IDS = process.env.ADMIN_ID
+    ? process.env.ADMIN_ID.split(',').map(id => id.trim()).filter(id => id !== '')
+    : [];
 
 /**
  * Check if user is admin
  */
 export function isAdmin(userId) {
-    return ADMIN_ID && userId === ADMIN_ID;
+    return ADMIN_IDS.includes(String(userId));
 }
 
 /**
@@ -39,6 +41,7 @@ function getEventEmoji(event) {
     if (cats.includes('festival')) return '🎉';
     if (cats.includes('show')) return '🎪';
     if (cats.includes('standup')) return '🎤';
+    if (cats.includes('cinema')) return '🎬';
     if (cats.includes('education')) return '📚';
     if (cats.includes('party')) return '🎉';
     if (cats.includes('quest')) return '🧩';
@@ -71,9 +74,12 @@ function decodeHTMLEntities(text) {
         .replace(/&nbsp;/g, ' ');
 }
 
-/** Link to the official Kinopoisk search for a recommended film. */
-function getKinopoiskUrl(title) {
-    return `https://www.kinopoisk.ru/s/?query=${encodeURIComponent(title)}`;
+/**
+ * Link for a recommended film: the direct Kinopoisk page from config,
+ * with a search-URL fallback for entries that don't have one yet.
+ */
+function getMovieUrl(movie, cleanedTitle) {
+    return movie.kinopoisk || `https://www.kinopoisk.ru/s/?query=${encodeURIComponent(cleanedTitle)}`;
 }
 
 /**
@@ -81,7 +87,9 @@ function getKinopoiskUrl(title) {
  */
 
 /**
- * Generate full post with events from all cities
+ * Generate full post with events from all cities.
+ * Returns { text, fallbackCities } — fallbackCities lists cities whose picks
+ * did not come from Yandex Afisha (fallback sources or nothing at all).
  */
 export async function generatePost() {
     const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
@@ -94,7 +102,12 @@ export async function generatePost() {
 
 `;
 
-    const cityResults = await Promise.all(Object.entries(CITIES).map(async ([slug, city]) => {
+    const fallbackCities = [];
+    const cityResults = [];
+
+    // Cities are fetched strictly one after another: parallel city runs
+    // multiply the request burst and get the IP banned by SmartCaptcha.
+    for (const [slug, city] of Object.entries(CITIES)) {
         let cityPost = `📍 <b>${escapeHTML(city.name)}</b>\n`;
         let events = [];
 
@@ -105,6 +118,10 @@ export async function generatePost() {
         }
 
         const topEvents = selectDiverseEvents(events, 3);
+        if (!topEvents.some(event => event.source === 'yandex_afisha')) {
+            fallbackCities.push(city.name);
+        }
+
         if (topEvents.length === 0) {
             cityPost += `Мероприятия уточняются.\n\n`;
         } else {
@@ -125,13 +142,13 @@ export async function generatePost() {
             });
             cityPost += '\n';
         }
-        return cityPost;
-    }));
+        cityResults.push(cityPost);
+    }
 
     post += cityResults.join('');
 
     const cleanedMovieTitle = cleanTitle(movie.title.replace(/[«»]/g, ''));
-    const movieLink = `<a href="${getKinopoiskUrl(cleanedMovieTitle)}">${escapeHTML(cleanedMovieTitle)}</a>`;
+    const movieLink = `<a href="${escapeHTML(getMovieUrl(movie, cleanedMovieTitle))}">${escapeHTML(cleanedMovieTitle)}</a>`;
     const movieDesc = cleanDescription(movie.desc, 100) || movie.desc.replace(/\.+$/, '.');
     const recipeLink = `<a href="${escapeHTML(recipe.url)}">${escapeHTML(cleanTitle(recipe.title))}</a>`;
 
@@ -139,11 +156,11 @@ export async function generatePost() {
 🎬 Посмотреть фильм «${movieLink}» — ${escapeHTML(movieDesc)}
 🍰 ${recipeLink} — рецепт
 
-<a href="https://t.me/kudagoduiobot?start=weekend">Больше ✨ ✨</a>`;
+<a href="https://t.me/kudagoduiobot?start=weekend">Больше</a> ✨ ✨`;
 
     if (post.length > 3500) {
         throw new Error(`Compact post is too long: ${post.length} characters`);
     }
 
-    return post;
+    return { text: post, fallbackCities };
 }
