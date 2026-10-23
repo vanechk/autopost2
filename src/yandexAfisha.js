@@ -798,12 +798,23 @@ export async function fetchEvents(citySlug) {
         // Headline concerts and solo stand-up mostly live on date-specific
         // listings, not in the default server-rendered rubric (for example,
         // Сергей Лазарев in Moscow or ГУДТАЙМС in Simferopol on 12 July).
-        for (const date of getWeekendDateKeys()) {
+        const weekendDates = [...getWeekendDateKeys()];
+        for (const date of weekendDates) {
             for (const cat of ['concert', 'standup']) {
                 if (isAfishaBlocked()) break;
                 categoryResults.push(await fetchCategoryPage(citySlug, cat, date));
                 await new Promise(r => setTimeout(r, 1500));
             }
+        }
+
+        // Exhibitions, theatre and festivals run for weeks, so one day is
+        // enough — but the dated page renders ~12 cards where the plain
+        // rubric renders 3. These feed the non-concert slots of the post.
+        const saturday = weekendDates.find(date => new Date(`${date}T12:00:00`).getDay() === 6) || weekendDates[0];
+        for (const cat of ['exhibition', 'theater', 'festival']) {
+            if (isAfishaBlocked() || !saturday) break;
+            categoryResults.push(await fetchCategoryPage(citySlug, cat, saturday));
+            await new Promise(r => setTimeout(r, 1500));
         }
 
         // Merge and deduplicate. A date page often has the card with full

@@ -103,9 +103,15 @@ export function scoreAfishaEvent(event) {
     if (isFolkEnsemble(event)) score -= 30;
     if (tags.includes('classical_music') && !tags.includes('artist-tour') && !tags.includes('top-persons')) score -= 10;
 
-    // Shows that run for months (a planetarium show, a weekly comedy night)
-    // are always available and say nothing about this particular weekend.
-    if (getRunLengthDays(event) > 45 || (event.dates || []).length >= 8) score -= 12;
+    // Concerts and shows that run for months (a planetarium show, a weekly
+    // comedy night) say nothing about this particular weekend. Exhibitions and
+    // repertory theatre run for months by nature, so they are exempt.
+    const isLongRunByNature = category === 'exhibition' || category === 'theater';
+    if (!isLongRunByNature && (getRunLengthDays(event) > 45 || (event.dates || []).length >= 8)) score -= 12;
+
+    // Zoo tickets, aquariums and a museum's permanent collection are listed
+    // as exhibitions but are not news for the weekend.
+    if (CURATION.notAnExhibitionPattern.test(event.title || '')) score -= 30;
 
     if (event.images?.length) score += 2;
 
@@ -130,18 +136,23 @@ export function isRecentRepeat(event, recent) {
     );
 }
 
+/**
+ * The post card is a mix: one concert, one thing on stage (theatre, show,
+ * stand-up) and one outing in the city (exhibition, festival, fair).
+ */
+const SLOTS = ['concert', 'stage', 'outing'];
+
 function slotType(event) {
-    const category = event.categories?.[0] || 'other';
-    if (category === 'standup') return 'comedy';
-    if (category === 'theater' || category === 'show') return 'stage';
-    if (category === 'concert') return 'concert';
-    return category;
+    const categories = (event.categories || []).map(category => typeof category === 'string' ? category : category.slug);
+    if (categories.includes('concert')) return 'concert';
+    if (categories.some(category => ['theater', 'show', 'standup', 'entertainment'].includes(category))) return 'stage';
+    return 'outing';
 }
 
 /**
  * Pick `count` events for a city card: block unsuitable content, drop recent
- * repeats, rank by score, and keep at most two concerts when a decent
- * non-concert alternative (stand-up, theatre, show, festival) exists.
+ * repeats, then take the best fresh listing for each slot (concert, stage,
+ * outing). A slot the city cannot fill goes to the best remaining listing.
  */
 export function curateEvents(events, { count = 3, recentTitles = new Set(), scoreFn = scoreAfishaEvent, label = '' } = {}) {
     const seenTitles = new Set();
@@ -166,15 +177,14 @@ export function curateEvents(events, { count = 3, recentTitles = new Set(), scor
 
     const fresh = pool.filter(item => !item.repeat && item.score >= CURATION.minScore);
     const selected = [];
-    const concerts = () => selected.filter(item => slotType(item.event) === 'concert').length;
-    const bestAlternative = fresh.find(item => slotType(item.event) !== 'concert');
 
+    for (const slot of SLOTS.slice(0, count)) {
+        const best = fresh.find(item => slotType(item.event) === slot);
+        if (best) selected.push(best);
+    }
     for (const item of fresh) {
         if (selected.length >= count) break;
-        const isConcert = slotType(item.event) === 'concert';
-        const reserveSlot = bestAlternative && !selected.includes(bestAlternative) && bestAlternative.score >= CURATION.alternativeMinScore;
-        if (isConcert && concerts() >= count - 1 && reserveSlot) continue;
-        selected.push(item);
+        if (!selected.includes(item)) selected.push(item);
     }
 
     // Small regional feeds: fill with whatever is left, repeats last.
@@ -185,7 +195,8 @@ export function curateEvents(events, { count = 3, recentTitles = new Set(), scor
     // A city card is never left empty just because its only listing ran before.
     if (selected.length === 0 && pool.length > 0) selected.push(pool[0]);
 
-    selected.sort((a, b) => b.score - a.score);
+    // Concert first, then stage, then outing — the card reads as a mix.
+    selected.sort((a, b) => SLOTS.indexOf(slotType(a.event)) - SLOTS.indexOf(slotType(b.event)) || b.score - a.score);
     console.log(`✨ Picks${label ? ` ${label}` : ''}:`, selected.map(item => `[${slotType(item.event)} ${item.score}] ${item.event.title}`).join(' | '));
     return selected.map(item => item.event);
 }

@@ -71,9 +71,6 @@ export const CURATION = {
     repeatWindowWeeks: 6,
     // Below this an event only fills a card that would otherwise be short.
     minScore: 25,
-    // A stand-up / theatre / show takes the third slot instead of a third
-    // concert when it scores at least this much.
-    alternativeMinScore: 60,
 
     // Afisha genre tags that never go into the team post.
     blockedTags: ['chanson', 'spiritual_music', 'karaoke'],
@@ -91,12 +88,18 @@ export const CURATION = {
     ],
 
     categoryBase: {
-        concert: 40, standup: 36, show: 34, festival: 34, theater: 32, exhibition: 12, education: -20, other: 0
+        concert: 40, standup: 36, show: 34, festival: 36, theater: 36, exhibition: 34, education: -20, other: 0
     },
     // Afisha tag signals of a listing people actually plan around.
     tagWeights: {
         'artist-tour': 28, 'hot': 14, 'top-persons': 10, 'yandexafisha-choice': 10, 'topshows': 8,
-        'high-rated': 8, 'season-premiere': 6, 'standup-solo': 8, 'big-tickets-theatre': 4,
+        'high-rated': 8, 'season-premiere': 6, 'immersive-theatre': 6, 'toptheatres': 8, 'laureate': 4,
+        // Exhibitions: real museum shows over commercial "immersive" rooms.
+        'tretyakovskaya-galereya': 12, 'exclusive': 8, 'photobiennale': 10, 'photography': 4,
+        'painting': 4, 'architecture': 4, 'history': 3, 'luchshee-vzroslym': 4,
+        'multimedia': -8, 'quest-vr': -10, 'media': -4,
+        // City happenings: fairs, food and city festivals.
+        'city-fest': 20, 'fair': 8, 'gastronomic': 6, 'standup-solo': 8, 'big-tickets-theatre': 4,
         // Anonymous "big stand-up night" line-ups run every weekend.
         'standup-collective': -12,
         // Loud or niche genres are allowed but should not lead a team post.
@@ -106,6 +109,7 @@ export const CURATION = {
     // people's music, film-score nights, tribute shows.
     genericTags: ['tribute', 'soundtrack', 'symphony-show', 'koncerty-imperial-orchestra', 'music-show'],
     genericTitlePattern: /при свечах|в свечах|в исполнении|оркестр|хиты|трибьют|tribute|кавер|cover|музыка (?:из|к|людовико|ханса)|вселенная|симфони[яи] |в планетарии|под куполом|погружение|величайш|легенд(?:ы|арн)|шоу (?:японских|барабанов)/i,
+    notAnExhibitionPattern: /зоопарк|аквариум|океанариум|постоянн(?:ая|ой) экспозиц|^посещение|выставки и постоянная/i,
     folkEnsemblePattern: /(?:^|\s)хор(?:\s|$|а\s)|ансамбль (?:песни|танца)|песни и пляски|казач|хореографический ансамбль/i
 };
 

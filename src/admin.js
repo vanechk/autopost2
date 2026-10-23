@@ -142,7 +142,8 @@ export async function generatePost() {
                 const emoji = getEventEmoji(event);
                 const title = event.short_title || event.title || 'Мероприятие';
                 const url = event.site_url || event.url || '';
-                const cleanedTitle = cleanTitle(title);
+                // Afisha prefixes museum shows with «Экспозиция и выставка …».
+                const cleanedTitle = cleanTitle(title).replace(/^(?:экспозиция и )?выставка\s+(?=«)/i, '');
                 const shortTitle = cleanedTitle.length > maxTitleLength
                     ? `${cleanedTitle.slice(0, maxTitleLength - 1).trim()}…`
                     : cleanedTitle;
