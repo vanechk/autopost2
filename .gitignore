@@ -20,3 +20,9 @@ test_output.txt
 generated_post.txt
 full_post.txt
 Post/
+.env.example
+!.env.example
+logs/
+*.pid
+tmp-yandex-api/
+tmp-yp/
